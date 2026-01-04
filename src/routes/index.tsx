@@ -132,6 +132,7 @@ function Home() {
 	const [roleOrder, setRoleOrder] = useState<string[]>([]);
 	const [rankOrder, setRankOrder] = useState<string[]>([]);
 	const [roleRankOrder, setRoleRankOrder] = useState<string[]>([]);
+	const [copyRoleId, setCopyRoleId] = useState<string>("");
 	const queryClient = useQueryClient();
 
 	const membersQuery = useQuery({
@@ -347,6 +348,7 @@ function Home() {
 	useEffect(() => {
 		if (!selectedRoleId) {
 			setRoleRankOrder([]);
+			setCopyRoleId("");
 			return;
 		}
 		const ordered = (roleRanksQuery.data ?? [])
@@ -459,15 +461,29 @@ function Home() {
 		return list.roles;
 	};
 
-	const activeRoleName = active?.role === "tribe-chief"
-		? "Chief"
-		: active?.role === "tribe-elder"
-			? "Elder"
-			: active?.role === "tribe-member"
-				? "Member"
-				: null;
+	const activeRoleName =
+		active?.role === "tribe-chief"
+			? "Chief"
+			: active?.role === "tribe-elder"
+				? "Elder"
+				: active?.role === "tribe-member"
+					? "Member"
+					: null;
 
 	const canManageMembers = Boolean(activeRoleName && accessFor("manage_members").includes(activeRoleName));
+	const canManageRoles = Boolean(activeRoleName && accessFor("manage_roles").includes(activeRoleName));
+	const canManageAccessLists = Boolean(
+		activeRoleName && accessFor("manage_access_lists").includes(activeRoleName)
+	);
+
+	useEffect(() => {
+		if (typeof window === "undefined") return;
+		if (!activeRoleName) {
+			window.localStorage.removeItem("moduleRole");
+			return;
+		}
+		window.localStorage.setItem("moduleRole", activeRoleName);
+	}, [activeRoleName]);
 
 	const updateRoleDraft = (
 		next: Partial<{ id?: string; name: string; description: string; sortOrder: number }>
@@ -548,6 +564,23 @@ function Home() {
 		updateRoleRankOrderMutation.mutate({ roleId: selectedRoleId, rankIds: next });
 	};
 
+	const handleCopyRoleRanks = () => {
+		if (!canManageRoles) return;
+		if (!selectedRoleId || !copyRoleId || copyRoleId === selectedRoleId) return;
+		const sourceRankIds = (roleRanksQuery.data ?? [])
+			.filter((row) => row.roleId === copyRoleId)
+			.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+			.map((row) => row.rankId);
+		const sourceOverrides = (roleRankOverridesQuery.data ?? [])
+			.filter((item) => item.roleId === copyRoleId)
+			.map((item) => ({ rankId: item.rankId, name: item.name }));
+		updateRoleRanksMutation.mutate({ roleId: selectedRoleId, rankIds: sourceRankIds });
+		updateRoleRankOverridesMutation.mutate({
+			roleId: selectedRoleId,
+			overrides: sourceOverrides
+		});
+	};
+
 	const handleAddMember = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
 		if (!canManageMembers) {
@@ -597,6 +630,10 @@ function Home() {
 
 	const handleSaveRole = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
+		if (!canManageRoles) {
+			setRoleError("You do not have access to manage roles.");
+			return;
+		}
 		if (!roleDraft.name.trim()) {
 			setRoleError("Role name is required.");
 			return;
@@ -622,6 +659,10 @@ function Home() {
 
 	const handleSaveRank = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
+		if (!canManageRoles) {
+			setRankError("You do not have access to manage ranks.");
+			return;
+		}
 		if (!rankDraft.name.trim()) {
 			setRankError("Rank name is required.");
 			return;
@@ -647,6 +688,10 @@ function Home() {
 
 	const handleSaveAccess = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
+		if (!canManageAccessLists) {
+			setAccessError("You do not have access to manage access lists.");
+			return;
+		}
 		if (!accessDraft.name.trim()) {
 			setAccessError("Access list name is required.");
 			return;
@@ -848,18 +893,18 @@ function Home() {
 										{visibilityQuery.isError ? (
 											<ErrorView title="Failed to load visibility" error={visibilityQuery.error} />
 										) : null}
-										{visibilityQuery.data ? (
-											<div className="stack">
-												{(["members", "roles"] as const).map((area) => {
-													const setting = visibilityQuery.data?.find((item) => item.area === area);
-													const isPublic = setting?.isPublic ?? (area === "members");
-													const label = area === "members" ? "Member list" : "Roles";
+											{visibilityQuery.data ? (
+												<div className="stack">
+													{(["members", "roles"] as const).map((area) => {
+														const setting = visibilityQuery.data?.find((item) => item.area === area);
+														const isPublic = setting?.isPublic ?? (area === "members");
+														const label = area === "members" ? "Member list" : "Roles";
 													return (
 														<label key={area} className="row">
 															<input
 																type="checkbox"
 																checked={isPublic}
-																disabled={active.role !== "tribe-chief" || updateVisibilityMutation.isPending}
+																disabled={!canManageRoles || updateVisibilityMutation.isPending}
 																onChange={(event) =>
 																	updateVisibilityMutation.mutate({
 																		area,
@@ -873,8 +918,8 @@ function Home() {
 														</label>
 													);
 												})}
-												{active.role !== "tribe-chief" ? (
-													<span className="small">Only Chiefs can change visibility.</span>
+												{!canManageRoles ? (
+													<span className="small">You do not have access to change visibility.</span>
 												) : null}
 											</div>
 										) : null}
@@ -1345,12 +1390,17 @@ function Home() {
 													.map((role) => (
 													<li
 														key={role.id}
-														draggable
+														draggable={canManageRoles}
 														onDragStart={(event) => {
+															if (!canManageRoles) return;
 															event.dataTransfer.setData("text/plain", role.id);
 														}}
-														onDragOver={(event) => event.preventDefault()}
+														onDragOver={(event) => {
+															if (!canManageRoles) return;
+															event.preventDefault();
+														}}
 														onDrop={(event) => {
+															if (!canManageRoles) return;
 															event.preventDefault();
 															const dragId = event.dataTransfer.getData("text/plain");
 															handleRoleReorder(dragId, role.id);
@@ -1395,6 +1445,7 @@ function Home() {
 																(row) => row.roleId === selectedRoleId
 															).length === 0
 														}
+														disabled={!canManageRoles}
 														onChange={(event) => {
 															if (event.target.checked) {
 																updateRoleRanksMutation.mutate({
@@ -1422,6 +1473,7 @@ function Home() {
 															className="dropdown-trigger"
 															type="button"
 															onClick={() => setRankRolesOpen((open) => !open)}
+															disabled={!canManageRoles}
 														>
 															Select ranks for this role
 														</button>
@@ -1436,6 +1488,7 @@ function Home() {
 																			<input
 																				type="checkbox"
 																				checked={checked}
+																				disabled={!canManageRoles}
 																				onChange={() => {
 																					const existing = (roleRanksQuery.data ?? [])
 																						.filter((row) => row.roleId === selectedRoleId)
@@ -1460,6 +1513,37 @@ function Home() {
 														) : null}
 													</div>
 												)}
+												{(rolesQuery.data ?? []).length > 1 ? (
+													<div className="stack">
+														<span className="small">Copy ranks from role</span>
+														<div className="row">
+															<select
+																value={copyRoleId}
+																onChange={(event) => setCopyRoleId(event.target.value)}
+																disabled={!canManageRoles}
+															>
+																<option value="">Select role</option>
+																{(rolesQuery.data ?? [])
+																	.filter((role) => role.id !== selectedRoleId)
+																	.map((role) => (
+																		<option key={role.id} value={role.id}>
+																			{role.name}
+																		</option>
+																	))}
+															</select>
+															<button
+																type="button"
+																onClick={handleCopyRoleRanks}
+																disabled={!copyRoleId || !canManageRoles}
+															>
+																Copy
+															</button>
+														</div>
+														<span className="small">
+															Copying replaces the role-specific ranks and clears custom names.
+														</span>
+													</div>
+												) : null}
 												{(roleRanksQuery.data ?? []).some(
 													(row) => row.roleId === selectedRoleId
 												) ? (
@@ -1482,12 +1566,17 @@ function Home() {
 																	<div
 																		className="table-row"
 																		key={rankId}
-																		draggable
+																		draggable={canManageRoles}
 																		onDragStart={(event) => {
+																			if (!canManageRoles) return;
 																			event.dataTransfer.setData("text/plain", rankId);
 																		}}
-																		onDragOver={(event) => event.preventDefault()}
+																		onDragOver={(event) => {
+																			if (!canManageRoles) return;
+																			event.preventDefault();
+																		}}
 																		onDrop={(event) => {
+																			if (!canManageRoles) return;
 																			event.preventDefault();
 																			const dragId = event.dataTransfer.getData("text/plain");
 																			handleRoleRankReorder(dragId, rankId);
@@ -1497,6 +1586,7 @@ function Home() {
 																		<input
 																			value={customName}
 																			placeholder="Use global name"
+																			disabled={!canManageRoles}
 																			onChange={(event) => {
 																				const value = event.target.value;
 																				setRoleRankOverrideDraft((prev) => ({
@@ -1529,7 +1619,7 @@ function Home() {
 																	overrides
 																});
 															}}
-															disabled={updateRoleRankOverridesMutation.isPending}
+															disabled={!canManageRoles || updateRoleRankOverridesMutation.isPending}
 														>
 															Save custom names
 														</button>
@@ -1544,18 +1634,20 @@ function Home() {
 														<input
 															value={rankDraft.name}
 															onChange={(event) => updateRankDraft({ name: event.target.value })}
+															disabled={!canManageRoles}
 														/>
 													</label>
-											<label className="stack">
-												<span className="small">Sort order</span>
-												<input
-													type="number"
-													value={rankDraft.sortOrder || ""}
-													onChange={(event) =>
-														updateRankDraft({ sortOrder: Number(event.target.value) })
-													}
-												/>
-											</label>
+													<label className="stack">
+														<span className="small">Sort order</span>
+														<input
+															type="number"
+															value={rankDraft.sortOrder || ""}
+															onChange={(event) =>
+																updateRankDraft({ sortOrder: Number(event.target.value) })
+															}
+															disabled={!canManageRoles}
+														/>
+													</label>
 													<label className="stack">
 														<span className="small">Description</span>
 														<input
@@ -1563,12 +1655,13 @@ function Home() {
 															onChange={(event) =>
 																updateRankDraft({ description: event.target.value })
 															}
+															disabled={!canManageRoles}
 														/>
 													</label>
 													<div className="row">
 														<button
 															type="submit"
-															disabled={createRankMutation.isPending || updateRankMutation.isPending}
+															disabled={!canManageRoles || createRankMutation.isPending || updateRankMutation.isPending}
 														>
 															{rankDraft.id ? "Update rank" : "Add rank"}
 														</button>
@@ -1578,6 +1671,7 @@ function Home() {
 																onClick={() =>
 																	setRankDraft({ name: "", description: "", sortOrder: 0 })
 																}
+																disabled={!canManageRoles}
 															>
 																Cancel
 															</button>
@@ -1599,12 +1693,17 @@ function Home() {
 															<div
 																className="table-row"
 																key={rank.id}
-																draggable
+																draggable={canManageRoles}
 																onDragStart={(event) => {
+																	if (!canManageRoles) return;
 																	event.dataTransfer.setData("text/plain", rank.id);
 																}}
-																onDragOver={(event) => event.preventDefault()}
+																onDragOver={(event) => {
+																	if (!canManageRoles) return;
+																	event.preventDefault();
+																}}
 																onDrop={(event) => {
+																	if (!canManageRoles) return;
 																	event.preventDefault();
 																	const dragId = event.dataTransfer.getData("text/plain");
 																	handleRankReorder(dragId, rank.id);
@@ -1623,13 +1722,14 @@ function Home() {
 																				sortOrder: rank.sortOrder ?? 0
 																			})
 																		}
+																		disabled={!canManageRoles}
 																	>
 																		Edit
 																	</button>
 																	<button
 																		type="button"
 																		onClick={() => deleteRankMutation.mutate(rank.id)}
-																		disabled={deleteRankMutation.isPending}
+																		disabled={!canManageRoles || deleteRankMutation.isPending}
 																	>
 																		Remove
 																	</button>
@@ -1652,6 +1752,7 @@ function Home() {
 												<input
 													value={roleDraft.name}
 													onChange={(event) => updateRoleDraft({ name: event.target.value })}
+													disabled={!canManageRoles}
 												/>
 											</label>
 											<label className="stack">
@@ -1662,6 +1763,7 @@ function Home() {
 													onChange={(event) =>
 														updateRoleDraft({ sortOrder: Number(event.target.value) })
 													}
+													disabled={!canManageRoles}
 												/>
 											</label>
 											<label className="stack">
@@ -1669,10 +1771,14 @@ function Home() {
 												<input
 													value={roleDraft.description}
 													onChange={(event) => updateRoleDraft({ description: event.target.value })}
+													disabled={!canManageRoles}
 												/>
 											</label>
 											<div className="row">
-												<button type="submit" disabled={createRoleMutation.isPending || updateRoleMutation.isPending}>
+												<button
+													type="submit"
+													disabled={!canManageRoles || createRoleMutation.isPending || updateRoleMutation.isPending}
+												>
 													{roleDraft.id ? "Update role" : "Add role"}
 												</button>
 												{roleDraft.id ? (
@@ -1680,13 +1786,14 @@ function Home() {
 														<button
 															type="button"
 															onClick={() => setRoleDraft({ name: "", description: "", sortOrder: 0 })}
+															disabled={!canManageRoles}
 														>
 															Cancel
 														</button>
 														<button
 															type="button"
 															onClick={() => deleteRoleMutation.mutate(roleDraft.id as string)}
-															disabled={deleteRoleMutation.isPending}
+															disabled={!canManageRoles || deleteRoleMutation.isPending}
 														>
 															Delete role
 														</button>
@@ -1710,6 +1817,7 @@ function Home() {
 												<input
 													value={accessDraft.name}
 													onChange={(event) => updateAccessDraft({ name: event.target.value })}
+													disabled={!canManageAccessLists}
 												/>
 											</label>
 											<label className="stack">
@@ -1717,6 +1825,7 @@ function Home() {
 												<input
 													value={accessDraft.description}
 													onChange={(event) => updateAccessDraft({ description: event.target.value })}
+													disabled={!canManageAccessLists}
 												/>
 											</label>
 											<label className="stack">
@@ -1731,6 +1840,7 @@ function Home() {
 															className="dropdown-trigger"
 															type="button"
 															onClick={() => setAccessRolesOpen((open) => !open)}
+															disabled={!canManageAccessLists}
 														>
 															{accessDraft.roles.length
 																? `${accessDraft.roles.length} selected`
@@ -1745,6 +1855,7 @@ function Home() {
 																			<input
 																				type="checkbox"
 																				checked={checked}
+																				disabled={!canManageAccessLists}
 																				onChange={() => {
 																					const next = new Set(accessDraft.roles);
 																					if (next.has(role.name)) {
@@ -1765,11 +1876,18 @@ function Home() {
 												)}
 											</label>
 											<div className="row">
-												<button type="submit" disabled={createAccessMutation.isPending || updateAccessMutation.isPending}>
+												<button
+													type="submit"
+													disabled={!canManageAccessLists || createAccessMutation.isPending || updateAccessMutation.isPending}
+												>
 													{accessDraft.id ? "Update access list" : "Add access list"}
 												</button>
 												{accessDraft.id ? (
-													<button type="button" onClick={() => setAccessDraft({ name: "", description: "", roles: [] })}>
+													<button
+														type="button"
+														onClick={() => setAccessDraft({ name: "", description: "", roles: [] })}
+														disabled={!canManageAccessLists}
+													>
 														Cancel
 													</button>
 												) : null}
@@ -1805,13 +1923,14 @@ function Home() {
 																		roles: accessList.roles ?? []
 																	})
 																}
+																disabled={!canManageAccessLists}
 															>
 																Edit
 															</button>
 															<button
 																type="button"
 																onClick={() => deleteAccessMutation.mutate(accessList.id)}
-																disabled={deleteAccessMutation.isPending}
+																disabled={!canManageAccessLists || deleteAccessMutation.isPending}
 															>
 																Remove
 															</button>

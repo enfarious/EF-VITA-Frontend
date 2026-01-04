@@ -94,6 +94,8 @@ code {
 	padding: 8px 10px;
 	border-radius: 10px;
 	background: rgba(255, 255, 255, 0.02);
+	box-sizing: border-box;
+	max-width: 100%;
 }
 
 .table.table-3 .table-row {
@@ -102,6 +104,7 @@ code {
 
 .table-row[draggable="true"] {
 	border: 1px dashed rgba(255, 255, 255, 0.1);
+	box-sizing: border-box;
 }
 
 .table-header {
@@ -147,6 +150,7 @@ code {
 	border: 1px dashed transparent;
 	border-radius: 10px;
 	padding: 2px;
+	box-sizing: border-box;
 }
 
 .list li[draggable="true"]:hover {

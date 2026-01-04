@@ -69,6 +69,38 @@ function isAuthed(req) {
 	return String(req.headers["x-module-auth"]).toLowerCase() === "true";
 }
 
+function getRoleName(req) {
+	const raw = req.headers["x-module-role"];
+	if (typeof raw !== "string") return "";
+	return raw.trim();
+}
+
+async function hasAccess(client, roleName, accessName) {
+	if (!roleName) return false;
+	const result = await client.query(
+		`SELECT 1
+		 FROM ${schema}.role_access ra
+		 JOIN ${schema}.access_lists al ON al.id = ra.access_list_id
+		 JOIN ${schema}.roles r ON r.id = ra.role_id
+		 WHERE r.name = $1 AND al.name = $2
+		 LIMIT 1`,
+		[roleName, accessName]
+	);
+	return result.rowCount > 0;
+}
+
+async function requireAccess(req, res, accessName) {
+	if (!isAuthed(req)) {
+		sendJson(res, 401, { message: "Authentication required." });
+		return false;
+	}
+	const roleName = getRoleName(req);
+	const ok = await hasAccess(pool, roleName, accessName);
+	if (!ok) {
+		sendJson(res, 403, { message: "Insufficient access." });
+	}
+	return ok;
+}
 async function getVisibilityMap(client) {
 	const result = await client.query(
 		`SELECT area, is_public
@@ -120,6 +152,7 @@ const server = http.createServer(async (req, res) => {
 			const area = url.pathname.split("/")[2];
 			if (req.method !== "PATCH") return methodNotAllowed(res);
 			if (area !== "members" && area !== "roles") return notFound(res);
+			if (!(await requireAccess(req, res, "manage_roles"))) return;
 
 			const payload = await readJson(req);
 			const isPublic = Boolean(payload?.isPublic);
@@ -152,6 +185,7 @@ const server = http.createServer(async (req, res) => {
 			}
 
 			if (req.method === "POST") {
+				if (!(await requireAccess(req, res, "manage_roles"))) return;
 				const payload = await readJson(req);
 				const name = payload?.name;
 				const description = payload?.description ?? null;
@@ -182,6 +216,7 @@ const server = http.createServer(async (req, res) => {
 
 		if (url.pathname === "/roles/order") {
 			if (req.method !== "PATCH") return methodNotAllowed(res);
+			if (!(await requireAccess(req, res, "manage_roles"))) return;
 			const payload = await readJson(req);
 			const roleIds = Array.isArray(payload?.roleIds) ? payload.roleIds : [];
 			const client = await pool.connect();
@@ -205,6 +240,11 @@ const server = http.createServer(async (req, res) => {
 
 		if (url.pathname === "/ranks") {
 			if (req.method === "GET") {
+				const visibility = await getVisibilityMap(pool);
+				const isPublic = visibility.get("roles") ?? false;
+				if (!isPublic && !isAuthed(req)) {
+					return sendJson(res, 401, { message: "Authentication required." });
+				}
 				const result = await pool.query(
 					`SELECT id, name, description, sort_order AS "sortOrder"
 					 FROM ${schema}.ranks
@@ -214,6 +254,7 @@ const server = http.createServer(async (req, res) => {
 			}
 
 			if (req.method === "POST") {
+				if (!(await requireAccess(req, res, "manage_roles"))) return;
 				const payload = await readJson(req);
 				const name = payload?.name;
 				const description = payload?.description ?? null;
@@ -244,6 +285,7 @@ const server = http.createServer(async (req, res) => {
 
 		if (url.pathname === "/ranks/order") {
 			if (req.method !== "PATCH") return methodNotAllowed(res);
+			if (!(await requireAccess(req, res, "manage_roles"))) return;
 			const payload = await readJson(req);
 			const rankIds = Array.isArray(payload?.rankIds) ? payload.rankIds : [];
 			const client = await pool.connect();
@@ -270,6 +312,7 @@ const server = http.createServer(async (req, res) => {
 			if (!rankId) return notFound(res);
 
 			if (req.method === "PATCH") {
+				if (!(await requireAccess(req, res, "manage_roles"))) return;
 				const payload = await readJson(req);
 				const name = payload?.name;
 				const description = payload?.description ?? null;
@@ -295,6 +338,7 @@ const server = http.createServer(async (req, res) => {
 			}
 
 			if (req.method === "DELETE") {
+				if (!(await requireAccess(req, res, "manage_roles"))) return;
 				await pool.query(`DELETE FROM ${schema}.ranks WHERE id = $1`, [rankId]);
 				return sendJson(res, 200, { ok: true });
 			}
@@ -321,6 +365,7 @@ const server = http.createServer(async (req, res) => {
 			const roleId = url.pathname.split("/")[3];
 			if (!roleId) return notFound(res);
 			if (req.method !== "PATCH") return methodNotAllowed(res);
+			if (!(await requireAccess(req, res, "manage_roles"))) return;
 			const payload = await readJson(req);
 			const rankIds = Array.isArray(payload?.rankIds) ? payload.rankIds : [];
 			const client = await pool.connect();
@@ -361,6 +406,7 @@ const server = http.createServer(async (req, res) => {
 			if (!roleId) return notFound(res);
 
 			if (req.method === "PATCH") {
+				if (!(await requireAccess(req, res, "manage_roles"))) return;
 				const payload = await readJson(req);
 				const overrides = Array.isArray(payload?.overrides) ? payload.overrides : [];
 
@@ -401,6 +447,7 @@ const server = http.createServer(async (req, res) => {
 			if (!roleId) return notFound(res);
 
 			if (req.method === "PATCH") {
+				if (!(await requireAccess(req, res, "manage_roles"))) return;
 				const payload = await readJson(req);
 				const rankIds = Array.isArray(payload?.rankIds) ? payload.rankIds : [];
 
@@ -436,6 +483,7 @@ const server = http.createServer(async (req, res) => {
 			if (!roleId) return notFound(res);
 
 			if (req.method === "PATCH") {
+				if (!(await requireAccess(req, res, "manage_roles"))) return;
 				const payload = await readJson(req);
 				const name = payload?.name;
 				const description = payload?.description ?? null;
@@ -461,6 +509,7 @@ const server = http.createServer(async (req, res) => {
 			}
 
 			if (req.method === "DELETE") {
+				if (!(await requireAccess(req, res, "manage_roles"))) return;
 				await pool.query(`DELETE FROM ${schema}.roles WHERE id = $1`, [roleId]);
 				return sendJson(res, 200, { ok: true });
 			}
@@ -470,6 +519,9 @@ const server = http.createServer(async (req, res) => {
 
 		if (url.pathname === "/access-lists") {
 			if (req.method === "GET") {
+				if (!isAuthed(req)) {
+					return sendJson(res, 401, { message: "Authentication required." });
+				}
 				const result = await pool.query(
 					`SELECT a.id,
 					        a.name,
@@ -486,6 +538,7 @@ const server = http.createServer(async (req, res) => {
 			}
 
 			if (req.method === "POST") {
+				if (!(await requireAccess(req, res, "manage_access_lists"))) return;
 				const payload = await readJson(req);
 				const name = payload?.name;
 				const description = payload?.description ?? null;
@@ -539,6 +592,7 @@ const server = http.createServer(async (req, res) => {
 			if (!accessListId) return notFound(res);
 
 			if (req.method === "PATCH") {
+				if (!(await requireAccess(req, res, "manage_access_lists"))) return;
 				const payload = await readJson(req);
 				const name = payload?.name;
 				const description = payload?.description ?? null;
@@ -609,6 +663,7 @@ const server = http.createServer(async (req, res) => {
 			}
 
 			if (req.method === "DELETE") {
+				if (!(await requireAccess(req, res, "manage_access_lists"))) return;
 				await pool.query(`DELETE FROM ${schema}.access_lists WHERE id = $1`, [accessListId]);
 				return sendJson(res, 200, { ok: true });
 			}
@@ -676,6 +731,7 @@ const server = http.createServer(async (req, res) => {
 			}
 
 			if (req.method === "POST") {
+				if (!(await requireAccess(req, res, "manage_members"))) return;
 				const payload = await readJson(req);
 				const displayName = payload?.displayName;
 				const status = payload?.status ?? "active";
@@ -774,6 +830,7 @@ const server = http.createServer(async (req, res) => {
 			if (!memberId) return notFound(res);
 
 			if (req.method === "PATCH") {
+				if (!(await requireAccess(req, res, "manage_members"))) return;
 				const payload = await readJson(req);
 				const displayName = payload?.displayName;
 				const status = payload?.status ?? "active";
@@ -875,6 +932,7 @@ const server = http.createServer(async (req, res) => {
 			}
 
 			if (req.method === "DELETE") {
+				if (!(await requireAccess(req, res, "manage_members"))) return;
 				await pool.query(`DELETE FROM ${schema}.members WHERE id = $1`, [memberId]);
 				return sendJson(res, 200, { ok: true });
 			}

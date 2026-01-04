@@ -23,11 +23,14 @@ export async function moduleFetch<T>(
 	}
 ): Promise<T> {
 	const url = resolveModuleUrl(path);
+	const roleHeader =
+		typeof window !== "undefined" ? window.localStorage.getItem("moduleRole") ?? "" : "";
 
 	const res = await fetch(url, {
 		method: opts?.method ?? "GET",
 		headers: {
 			"X-Module-Auth": "true",
+			"X-Module-Role": roleHeader,
 			...(opts?.body != null ? { "Content-Type": "application/json" } : {}),
 			...(opts?.headers ?? {})
 		},
