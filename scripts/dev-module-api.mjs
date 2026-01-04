@@ -246,9 +246,13 @@ const server = http.createServer(async (req, res) => {
 					return sendJson(res, 401, { message: "Authentication required." });
 				}
 				const result = await pool.query(
-					`SELECT id, name, description, sort_order AS "sortOrder"
+					`SELECT id,
+					        name,
+					        description,
+					        sort_order AS "sortOrder",
+					        role_id AS "roleId"
 					 FROM ${schema}.ranks
-					 ORDER BY sort_order, name`
+					 ORDER BY role_id NULLS FIRST, sort_order, name`
 				);
 				return sendJson(res, 200, result.rows);
 			}
@@ -258,26 +262,67 @@ const server = http.createServer(async (req, res) => {
 				const payload = await readJson(req);
 				const name = payload?.name;
 				const description = payload?.description ?? null;
+				const roleId =
+					typeof payload?.roleId === "string" && payload.roleId.trim() ? payload.roleId : null;
 
 				if (!name || typeof name !== "string") {
 					return sendJson(res, 400, { message: "name is required." });
 				}
 
 				const sortOrder = Number.isFinite(payload?.sortOrder) ? Number(payload.sortOrder) : null;
-				const result = await pool.query(
-					`INSERT INTO ${schema}.ranks (name, description, sort_order, created_at, updated_at)
-					 VALUES (
-					 	$1,
-					 	$2,
-					 	COALESCE($3, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM ${schema}.ranks)),
-					 	now(),
-					 	now()
-					 )
-					 RETURNING id, name, description, sort_order AS "sortOrder"`,
-					[name.trim(), description, sortOrder]
-				);
+				const client = await pool.connect();
+				try {
+					await client.query("BEGIN");
+					const result = await client.query(
+						`INSERT INTO ${schema}.ranks (name, description, sort_order, role_id, created_at, updated_at)
+						 VALUES (
+						 	$1,
+						 	$2,
+						 	COALESCE(
+						 		$3,
+						 		(
+						 			SELECT COALESCE(MAX(sort_order), 0) + 1
+						 			FROM ${schema}.ranks
+						 			WHERE role_id IS NOT DISTINCT FROM $4
+						 		)
+						 	),
+						 	$4,
+						 	now(),
+						 	now()
+						 )
+						 RETURNING id, name, description, sort_order AS "sortOrder", role_id AS "roleId"`,
+						[name.trim(), description, sortOrder, roleId]
+					);
 
-				return sendJson(res, 201, result.rows[0]);
+					if (roleId) {
+						await client.query(
+							`INSERT INTO ${schema}.role_ranks (role_id, rank_id, sort_order, created_at)
+							 VALUES (
+							 	$1,
+							 	$2,
+							 	COALESCE(
+							 		$3,
+							 		(
+							 			SELECT COALESCE(MAX(sort_order), 0) + 1
+							 			FROM ${schema}.role_ranks
+							 			WHERE role_id = $1
+							 		)
+							 	),
+							 	now()
+							 )
+							 ON CONFLICT DO NOTHING`,
+							[roleId, result.rows[0].id, sortOrder]
+						);
+					}
+
+					await client.query("COMMIT");
+					return sendJson(res, 201, result.rows[0]);
+				} catch (error) {
+					await client.query("ROLLBACK");
+					throw error;
+				} finally {
+					client.release();
+				}
 			}
 
 			return methodNotAllowed(res);
@@ -293,7 +338,9 @@ const server = http.createServer(async (req, res) => {
 				await client.query("BEGIN");
 				for (let i = 0; i < rankIds.length; i += 1) {
 					await client.query(
-						`UPDATE ${schema}.ranks SET sort_order = $1, updated_at = now() WHERE id = $2`,
+						`UPDATE ${schema}.ranks
+						 SET sort_order = $1, updated_at = now()
+						 WHERE id = $2 AND role_id IS NULL`,
 						[i + 1, rankIds[i]]
 					);
 				}
@@ -329,7 +376,7 @@ const server = http.createServer(async (req, res) => {
 					     sort_order = COALESCE($3, sort_order),
 					     updated_at = now()
 					 WHERE id = $4
-					 RETURNING id, name, description, sort_order AS "sortOrder"`,
+					 RETURNING id, name, description, sort_order AS "sortOrder", role_id AS "roleId"`,
 					[name.trim(), description, sortOrder, rankId]
 				);
 
@@ -454,6 +501,19 @@ const server = http.createServer(async (req, res) => {
 				const client = await pool.connect();
 				try {
 					await client.query("BEGIN");
+					if (rankIds.length) {
+						const allowed = await client.query(
+							`SELECT id
+							 FROM ${schema}.ranks
+							 WHERE id = ANY($1::uuid[])
+							   AND (role_id IS NULL OR role_id = $2)`,
+							[rankIds, roleId]
+						);
+						if (allowed.rowCount !== rankIds.length) {
+							await client.query("ROLLBACK");
+							return sendJson(res, 400, { message: "Rank list contains invalid entries for role." });
+						}
+					}
 					await client.query(`DELETE FROM ${schema}.role_ranks WHERE role_id = $1`, [roleId]);
 					for (let i = 0; i < rankIds.length; i += 1) {
 						const rankId = rankIds[i];
@@ -685,7 +745,8 @@ const server = http.createServer(async (req, res) => {
 					        m.status,
 					        m.wallet_address,
 					        COALESCE(roles.roles, ARRAY[]::text[]) AS roles,
-					        COALESCE(global_ranks.ranks, ARRAY[]::text[]) AS global_ranks,
+					        global_rank.rank_id AS global_rank_id,
+					        global_rank.rank_name AS global_rank_name,
 					        COALESCE(role_ranks.role_ranks, '[]'::json) AS role_ranks
 					 FROM ${schema}.members m
 					 LEFT JOIN LATERAL (
@@ -695,16 +756,18 @@ const server = http.createServer(async (req, res) => {
 					 	WHERE mr.member_id = m.id
 					 ) roles ON true
 					 LEFT JOIN LATERAL (
-					 	SELECT array_agg(rk.name) AS ranks
+					 	SELECT mr.rank_id AS rank_id, rk.name AS rank_name
 					 	FROM ${schema}.member_ranks mr
 					 	JOIN ${schema}.ranks rk ON rk.id = mr.rank_id
 					 	WHERE mr.member_id = m.id AND mr.role_id IS NULL
-					 ) global_ranks ON true
+					 	LIMIT 1
+					 ) global_rank ON true
 					 LEFT JOIN LATERAL (
 					 	SELECT json_agg(
 					 		jsonb_build_object(
 					 			'role', rr.name,
-					 			'rank', COALESCE(rro.name, rk.name)
+					 			'rank', COALESCE(rro.name, rk.name),
+					 			'rankId', rk.id
 					 		)
 					 	) AS role_ranks
 					 	FROM ${schema}.member_ranks mr
@@ -723,7 +786,9 @@ const server = http.createServer(async (req, res) => {
 					status: row.status,
 					walletAddress: row.wallet_address,
 					roles: row.roles ?? [],
-					globalRanks: row.global_ranks ?? [],
+					globalRank: row.global_rank_id
+						? { id: row.global_rank_id, name: row.global_rank_name }
+						: null,
 					roleRanks: row.role_ranks ?? []
 				}));
 
@@ -811,7 +876,7 @@ const server = http.createServer(async (req, res) => {
 						status: member.status,
 						walletAddress: member.wallet_address,
 						roles,
-						globalRanks: [],
+						globalRank: null,
 						roleRanks: []
 					});
 				} catch (error) {
@@ -921,7 +986,9 @@ const server = http.createServer(async (req, res) => {
 						displayName: memberResult.rows[0].display_name,
 						status: memberResult.rows[0].status,
 						walletAddress: memberResult.rows[0].wallet_address,
-						roles
+						roles,
+						globalRank: null,
+						roleRanks: []
 					});
 				} catch (error) {
 					await client.query("ROLLBACK");

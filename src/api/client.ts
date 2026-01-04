@@ -31,6 +31,7 @@ export async function apiFetch<T>(
 
 	const res = await fetch(url, {
 		method: opts?.method ?? "GET",
+		credentials: "include",
 		headers: {
 			...(opts?.body != null ? { "Content-Type": "application/json" } : {}),
 			...(opts?.headers ?? {})

@@ -6,8 +6,8 @@ export type Member = {
 	status: "active" | "pending" | "suspended";
 	walletAddress?: string | null;
 	roles: string[];
-	globalRanks: string[];
-	roleRanks: { role: string; rank: string }[];
+	globalRank?: { id: string; name: string } | null;
+	roleRanks: { role: string; rank: string; rankId: string }[];
 };
 
 export type CreateMemberInput = {

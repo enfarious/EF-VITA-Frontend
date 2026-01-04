@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { createMember, deleteMember, listMembers, updateMember, type CreateMemberInput } from "@/api/members";
 import { ErrorView } from "@/components/ErrorView";
 import { Loading } from "@/components/Loading";
+import { createTenant, getMe, installModule, listTenantMembers } from "@/api/spine";
 import {
 	createAccessList,
 	createRank,
@@ -26,6 +27,7 @@ import {
 	updateRoleRanks
 } from "@/api/roles";
 import { listVisibility, updateVisibility } from "@/api/visibility";
+import { env } from "@/env";
 
 export const Route = createFileRoute("/")({
 	component: Home
@@ -33,40 +35,21 @@ export const Route = createFileRoute("/")({
 
 type Persona = {
 	label: string;
-	username: string;
-	password: string;
 	role: "tenant-admin" | "tribe-chief" | "tribe-elder" | "tribe-member";
 };
 
 type TenantSection = "overview" | "frontend" | "billing";
 type MemberSection = "overview" | "members" | "roles" | "access";
 
-const personas: Persona[] = [
-	{
-		label: "Tenant Admin",
-		username: "TenantAdmin",
-		password: "PasswordYo!2026",
-		role: "tenant-admin"
-	},
-	{
-		label: "Tribe Chief",
-		username: "TribeChief",
-		password: "PasswordYo!2026",
-		role: "tribe-chief"
-	},
-	{
-		label: "Tribe Elder",
-		username: "TribeElder",
-		password: "PasswordYo!2026",
-		role: "tribe-elder"
-	},
-	{
-		label: "Tribe Member",
-		username: "TribeMember",
-		password: "PasswordYo!2026",
-		role: "tribe-member"
-	}
-];
+const adminPersona: Persona = {
+	label: "Tenant Admin",
+	role: "tenant-admin"
+};
+
+const memberPersona: Persona = {
+	label: "Tribe Member",
+	role: "tribe-member"
+};
 
 const memberDefaults: CreateMemberInput = {
 	displayName: "",
@@ -78,19 +61,22 @@ const memberDefaults: CreateMemberInput = {
 };
 
 function Home() {
-	const [username, setUsername] = useState("TenantAdmin");
-	const [password, setPassword] = useState("PasswordYo!2026");
 	const [active, setActive] = useState<Persona | null>(null);
-	const [error, setError] = useState<string | null>(null);
 	const [tenantSection, setTenantSection] = useState<TenantSection>("overview");
 	const [memberSection, setMemberSection] = useState<MemberSection>("overview");
 	const [memberDraft, setMemberDraft] = useState<CreateMemberInput>(memberDefaults);
 	const [memberError, setMemberError] = useState<string | null>(null);
+	const [tenantDraft, setTenantDraft] = useState({ name: "V.I.T.A.", slug: "vita" });
+	const [tenantError, setTenantError] = useState<string | null>(null);
+	const [moduleError, setModuleError] = useState<string | null>(null);
 	const [memberEdit, setMemberEdit] = useState<{
 		id: string;
 		draft: CreateMemberInput;
 		readonly: boolean;
 	} | null>(null);
+	const [memberSearch, setMemberSearch] = useState("");
+	const [roleSearch, setRoleSearch] = useState("");
+	const [accessSearch, setAccessSearch] = useState("");
 	const [rolesOpen, setRolesOpen] = useState(false);
 	const [roleDraft, setRoleDraft] = useState<{
 		id?: string;
@@ -114,6 +100,14 @@ function Home() {
 		description: "",
 		sortOrder: 0
 	});
+	const [roleRankDraft, setRoleRankDraft] = useState<{
+		id?: string;
+		name: string;
+		description: string;
+	}>({
+		name: "",
+		description: ""
+	});
 	const [rankError, setRankError] = useState<string | null>(null);
 	const [accessDraft, setAccessDraft] = useState<{
 		id?: string;
@@ -134,6 +128,17 @@ function Home() {
 	const [roleRankOrder, setRoleRankOrder] = useState<string[]>([]);
 	const [copyRoleId, setCopyRoleId] = useState<string>("");
 	const queryClient = useQueryClient();
+	const meQuery = useQuery({
+		queryKey: ["spine-me"],
+		queryFn: getMe,
+		enabled: Boolean(env.apiBaseUrl)
+	});
+	const spineMembership = meQuery.data?.memberships?.[0] ?? null;
+	const spineMembersQuery = useQuery({
+		queryKey: ["spine-members", spineMembership?.slug ?? ""],
+		queryFn: () => listTenantMembers(spineMembership?.slug ?? ""),
+		enabled: Boolean(spineMembership?.slug)
+	});
 
 	const membersQuery = useQuery({
 		queryKey: ["module-members"],
@@ -250,9 +255,14 @@ function Home() {
 
 	const createRankMutation = useMutation({
 		mutationFn: createRank,
-		onSuccess: () => {
+		onSuccess: (_data, variables) => {
 			queryClient.invalidateQueries({ queryKey: ["module-ranks"] });
-			setRankDraft({ name: "", description: "", sortOrder: 0 });
+			queryClient.invalidateQueries({ queryKey: ["module-role-ranks"] });
+			if (variables?.roleId) {
+				setRoleRankDraft({ name: "", description: "" });
+			} else {
+				setRankDraft({ name: "", description: "", sortOrder: 0 });
+			}
 			setRankError(null);
 		},
 		onError: (err) => {
@@ -271,10 +281,16 @@ function Home() {
 			name: string;
 			description?: string;
 			sortOrder?: number;
+			roleId?: string | null;
 		}) => updateRank(id, { name, description, sortOrder }),
-		onSuccess: () => {
+		onSuccess: (_data, variables) => {
 			queryClient.invalidateQueries({ queryKey: ["module-ranks"] });
-			setRankDraft({ name: "", description: "", sortOrder: 0 });
+			queryClient.invalidateQueries({ queryKey: ["module-role-ranks"] });
+			if (variables?.roleId) {
+				setRoleRankDraft({ name: "", description: "" });
+			} else {
+				setRankDraft({ name: "", description: "", sortOrder: 0 });
+			}
 			setRankError(null);
 		},
 		onError: (err) => {
@@ -284,7 +300,10 @@ function Home() {
 
 	const deleteRankMutation = useMutation({
 		mutationFn: deleteRank,
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ["module-ranks"] })
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["module-ranks"] });
+			queryClient.invalidateQueries({ queryKey: ["module-role-ranks"] });
+		}
 	});
 
 	const updateRoleRanksMutation = useMutation({
@@ -323,6 +342,7 @@ function Home() {
 	useEffect(() => {
 		if (!selectedRoleId) {
 			setRoleRankOverrideDraft({});
+			setRoleRankDraft({ name: "", description: "" });
 			return;
 		}
 		const overrides = (roleRankOverridesQuery.data ?? []).filter(
@@ -333,6 +353,7 @@ function Home() {
 			next[item.rankId] = item.name;
 		}
 		setRoleRankOverrideDraft(next);
+		setRoleRankDraft({ name: "", description: "" });
 	}, [selectedRoleId, roleRankOverridesQuery.data]);
 
 	useEffect(() => {
@@ -342,7 +363,7 @@ function Home() {
 
 	useEffect(() => {
 		if (!ranksQuery.data) return;
-		setRankOrder(ranksQuery.data.map((rank) => rank.id));
+		setRankOrder(ranksQuery.data.filter((rank) => !rank.roleId).map((rank) => rank.id));
 	}, [ranksQuery.data]);
 
 	useEffect(() => {
@@ -397,6 +418,31 @@ function Home() {
 		onSuccess: () => queryClient.invalidateQueries({ queryKey: ["module-access-lists"] })
 	});
 
+	const createTenantMutation = useMutation({
+		mutationFn: createTenant,
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["spine-me"] });
+			queryClient.invalidateQueries({ queryKey: ["spine-members"] });
+			setTenantError(null);
+		},
+		onError: (err) => {
+			setTenantError(err instanceof Error ? err.message : "Failed to create tenant.");
+		}
+	});
+
+	const installModuleMutation = useMutation({
+		mutationFn: ({ slug, moduleId }: { slug: string; moduleId: string }) =>
+			installModule(slug, moduleId),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["spine-me"] });
+			queryClient.invalidateQueries({ queryKey: ["spine-members"] });
+			setModuleError(null);
+		},
+		onError: (err) => {
+			setModuleError(err instanceof Error ? err.message : "Failed to install module.");
+		}
+	});
+
 	const updateVisibilityMutation = useMutation({
 		mutationFn: ({ area, isPublic }: { area: "members" | "roles"; isPublic: boolean }) =>
 			updateVisibility(area, isPublic),
@@ -417,31 +463,30 @@ function Home() {
 		return "Member-level access: view tribe info and roster.";
 	}, [active]);
 
-	const onLogin = (event: FormEvent<HTMLFormElement>) => {
-		event.preventDefault();
-		const match = personas.find(
-			(persona) => persona.username === username && persona.password === password
-		);
+	const discordAuthUrl = env.apiBaseUrl
+		? new URL("/auth/discord", env.apiBaseUrl).toString()
+		: "";
+	const logoutUrl = env.apiBaseUrl ? new URL("/auth/logout", env.apiBaseUrl).toString() : "";
 
-		if (!match) {
-			setActive(null);
-			setError("Login failed. Try a preset persona.");
-			return;
-		}
-
-		setError(null);
-		setActive(match);
-		if (match.role === "tenant-admin") {
-			setTenantSection("overview");
-		} else {
-			setMemberSection("overview");
-		}
+	const goToDiscordAuth = () => {
+		if (!discordAuthUrl || typeof window === "undefined") return;
+		window.location.assign(discordAuthUrl);
 	};
 
-	const setPersona = (persona: Persona) => {
-		setUsername(persona.username);
-		setPassword(persona.password);
-		setError(null);
+	const handleSpineLogout = () => {
+		if (!logoutUrl || typeof window === "undefined") return;
+		window.location.assign(logoutUrl);
+	};
+
+	const enterAdminPortal = () => {
+		if (!meQuery.data) return;
+		setActive(adminPersona);
+		setTenantSection("overview");
+	};
+
+	const enterMemberPortal = () => {
+		setActive(memberPersona);
+		setMemberSection("overview");
 	};
 
 	const updateMemberDraft = (next: Partial<CreateMemberInput>) => {
@@ -485,6 +530,16 @@ function Home() {
 		window.localStorage.setItem("moduleRole", activeRoleName);
 	}, [activeRoleName]);
 
+	useEffect(() => {
+		if (typeof window === "undefined") return;
+		const slug = meQuery.data?.memberships?.[0]?.slug ?? "";
+		if (!slug) {
+			window.localStorage.removeItem("activeTenantSlug");
+			return;
+		}
+		window.localStorage.setItem("activeTenantSlug", slug);
+	}, [meQuery.data]);
+
 	const updateRoleDraft = (
 		next: Partial<{ id?: string; name: string; description: string; sortOrder: number }>
 	) => {
@@ -495,6 +550,10 @@ function Home() {
 		next: Partial<{ id?: string; name: string; description: string; sortOrder: number }>
 	) => {
 		setRankDraft((prev) => ({ ...prev, ...next }));
+	};
+
+	const updateRoleRankDraft = (next: Partial<{ id?: string; name: string; description: string }>) => {
+		setRoleRankDraft((prev) => ({ ...prev, ...next }));
 	};
 
 	const updateAccessDraft = (
@@ -567,12 +626,15 @@ function Home() {
 	const handleCopyRoleRanks = () => {
 		if (!canManageRoles) return;
 		if (!selectedRoleId || !copyRoleId || copyRoleId === selectedRoleId) return;
+		const rankLookup = new Map((ranksQuery.data ?? []).map((rank) => [rank.id, rank]));
 		const sourceRankIds = (roleRanksQuery.data ?? [])
 			.filter((row) => row.roleId === copyRoleId)
+			.filter((row) => !rankLookup.get(row.rankId)?.roleId)
 			.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
 			.map((row) => row.rankId);
 		const sourceOverrides = (roleRankOverridesQuery.data ?? [])
 			.filter((item) => item.roleId === copyRoleId)
+			.filter((item) => !rankLookup.get(item.rankId)?.roleId)
 			.map((item) => ({ rankId: item.rankId, name: item.name }));
 		updateRoleRanksMutation.mutate({ roleId: selectedRoleId, rankIds: sourceRankIds });
 		updateRoleRankOverridesMutation.mutate({
@@ -686,6 +748,37 @@ function Home() {
 		}
 	};
 
+	const handleSaveRoleRank = (event: FormEvent<HTMLFormElement>) => {
+		event.preventDefault();
+		if (!canManageRoles) {
+			setRankError("You do not have access to manage ranks.");
+			return;
+		}
+		if (!selectedRoleId) {
+			setRankError("Select a role to add role-specific ranks.");
+			return;
+		}
+		if (!roleRankDraft.name.trim()) {
+			setRankError("Rank name is required.");
+			return;
+		}
+
+		if (roleRankDraft.id) {
+			updateRankMutation.mutate({
+				id: roleRankDraft.id,
+				name: roleRankDraft.name.trim(),
+				description: roleRankDraft.description.trim() || undefined,
+				roleId: selectedRoleId
+			});
+		} else {
+			createRankMutation.mutate({
+				name: roleRankDraft.name.trim(),
+				description: roleRankDraft.description.trim() || undefined,
+				roleId: selectedRoleId
+			});
+		}
+	};
+
 	const handleSaveAccess = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
 		if (!canManageAccessLists) {
@@ -713,6 +806,90 @@ function Home() {
 		}
 	};
 
+	const handleCreateTenant = (event: FormEvent<HTMLFormElement>) => {
+		event.preventDefault();
+		if (!tenantDraft.name.trim() || !tenantDraft.slug.trim()) {
+			setTenantError("Tenant name and slug are required.");
+			return;
+		}
+		createTenantMutation.mutate({
+			name: tenantDraft.name.trim(),
+			slug: tenantDraft.slug.trim()
+		});
+	};
+
+	const handleInstallModule = () => {
+		const slug = spineMembership?.slug || tenantDraft.slug.trim();
+		if (!slug) {
+			setModuleError("Add a tenant slug to install modules.");
+			return;
+		}
+		installModuleMutation.mutate({ slug, moduleId: "basic_tribe_ui" });
+	};
+
+	const activeMembers = spineMembership?.slug
+		? (spineMembersQuery.data?.members ?? []).map((member) => ({
+				id: String(member.id),
+				displayName: member.display_name,
+				status: "active" as const,
+				walletAddress: null,
+				roles: member.role ? [member.role] : [],
+				globalRank: null,
+				roleRanks: []
+			}))
+		: membersQuery.data ?? [];
+	const filteredMembers = activeMembers.filter((member) => {
+		const query = memberSearch.trim().toLowerCase();
+		if (!query) return true;
+		return (
+			member.displayName.toLowerCase().includes(query) ||
+			member.roles.join(" ").toLowerCase().includes(query) ||
+			(member.walletAddress ?? "").toLowerCase().includes(query)
+		);
+	});
+
+	const filteredRoles = (rolesQuery.data ?? []).filter((role) => {
+		const query = roleSearch.trim().toLowerCase();
+		if (!query) return true;
+		return (
+			role.name.toLowerCase().includes(query) ||
+			(role.description ?? "").toLowerCase().includes(query)
+		);
+	});
+
+	const filteredAccessLists = (accessListsQuery.data ?? []).filter((accessList) => {
+		const query = accessSearch.trim().toLowerCase();
+		if (!query) return true;
+		return (
+			accessList.name.toLowerCase().includes(query) ||
+			(accessList.description ?? "").toLowerCase().includes(query) ||
+			accessList.roles.join(" ").toLowerCase().includes(query)
+		);
+	});
+
+	const globalRanks = (ranksQuery.data ?? []).filter((rank) => !rank.roleId);
+	const roleSpecificRanks = selectedRoleId
+		? (ranksQuery.data ?? []).filter((rank) => rank.roleId === selectedRoleId)
+		: [];
+	const roleSpecificRankIds = new Set(roleSpecificRanks.map((rank) => rank.id));
+	const orderedRoleSpecificRanks = roleRankOrder.length
+		? roleRankOrder
+				.map((id) => roleSpecificRanks.find((rank) => rank.id === id))
+				.filter((rank): rank is NonNullable<typeof roleSpecificRanks>[number] => Boolean(rank))
+		: roleSpecificRanks;
+	const selectableRoleRanks = selectedRoleId ? [...globalRanks, ...roleSpecificRanks] : globalRanks;
+	const isUsingGlobalRanks = selectedRoleId
+		? (roleRanksQuery.data ?? []).filter((row) => row.roleId === selectedRoleId).length === 0
+		: true;
+	const usingSpineMembers = Boolean(spineMembership?.slug);
+	const orderedRoles = roleOrder.length
+		? roleOrder
+				.map((id) => (rolesQuery.data ?? []).find((role) => role.id === id))
+				.filter((role): role is NonNullable<typeof rolesQuery.data>[number] => Boolean(role))
+		: rolesQuery.data ?? [];
+	const filteredRoleIds = new Set(filteredRoles.map((role) => role.id));
+	const orderedFilteredRoles = orderedRoles.filter((role) => filteredRoleIds.has(role.id));
+
 	return (
 		<div className="card">
 			<h2 style={{ marginTop: 0 }}>VITA Single-Tribe Frontend</h2>
@@ -726,10 +903,38 @@ function Home() {
 								<div style={{ fontWeight: 700 }}>{active.label}</div>
 								<div className="small">{summary}</div>
 							</div>
-							<button type="button" onClick={() => setActive(null)}>
-								Sign out
-							</button>
+							<div className="row">
+								{meQuery.data ? (
+									<button type="button" onClick={handleSpineLogout}>
+										Sign out of spine
+									</button>
+								) : null}
+								<button type="button" onClick={() => setActive(null)}>
+									Back
+								</button>
+							</div>
 						</div>
+					</div>
+					<div className="card subtle">
+						<div style={{ fontWeight: 700, marginBottom: 6 }}>Spine session</div>
+						{!env.apiBaseUrl ? (
+							<div className="small">VITE_API_BASE_URL is not set.</div>
+						) : meQuery.isLoading ? (
+							<Loading />
+						) : meQuery.isError ? (
+							<ErrorView title="Failed to load spine session" error={meQuery.error} />
+						) : meQuery.data ? (
+							<div className="kv">
+								<span>User</span>
+								<span>{meQuery.data.display_name || meQuery.data.email}</span>
+								<span>Tenant</span>
+								<span>{spineMembership?.slug ?? "None"}</span>
+								<span>Role</span>
+								<span>{spineMembership?.role ?? "None"}</span>
+							</div>
+						) : (
+							<div className="small">Not authenticated yet.</div>
+						)}
 					</div>
 
 					{active.role === "tenant-admin" ? (
@@ -785,6 +990,46 @@ function Home() {
 										</div>
 									</div>
 									<div className="card">
+										<div style={{ fontWeight: 700, marginBottom: 6 }}>Create tenant</div>
+										<div className="small">Helper for new tribes using the default UI.</div>
+										<form className="stack" onSubmit={handleCreateTenant}>
+											<label className="stack">
+												<span className="small">Display name</span>
+												<input
+													value={tenantDraft.name}
+													onChange={(event) =>
+														setTenantDraft((prev) => ({
+															...prev,
+															name: event.target.value
+														}))
+													}
+												/>
+											</label>
+											<label className="stack">
+												<span className="small">Slug (URL-safe)</span>
+												<input
+													value={tenantDraft.slug}
+													onChange={(event) =>
+														setTenantDraft((prev) => ({
+															...prev,
+															slug: event.target.value
+														}))
+													}
+													placeholder="vita-prime"
+												/>
+											</label>
+											<div className="row">
+												<button type="submit" disabled={createTenantMutation.isPending}>
+													{createTenantMutation.isPending ? "Creating..." : "Create tenant"}
+												</button>
+												{tenantError ? <span className="small">{tenantError}</span> : null}
+											</div>
+										</form>
+										<div className="small">
+											Example: use display name "V.I.T.A." with slug "vita" for a clean URL.
+										</div>
+									</div>
+									<div className="card">
 										<div style={{ fontWeight: 700, marginBottom: 6 }}>Security</div>
 										<div className="small">Wallet authentication will land here (Sui).</div>
 										<div className="row">
@@ -803,6 +1048,25 @@ function Home() {
 										<div className="row">
 											<button type="button">Keep default</button>
 											<button type="button">Upload custom</button>
+										</div>
+									</div>
+									<div className="card">
+										<div style={{ fontWeight: 700, marginBottom: 6 }}>Module install</div>
+										<div className="small">Install the default tribe module on the spine.</div>
+										<div className="row">
+											<button
+												type="button"
+												onClick={handleInstallModule}
+												disabled={installModuleMutation.isPending}
+											>
+												{installModuleMutation.isPending ? "Installing..." : "Install Basic Tribe UI"}
+											</button>
+											{moduleError ? <span className="small">{moduleError}</span> : null}
+										</div>
+										<div className="small">
+											Targets: /t/
+											{spineMembership?.slug || tenantDraft.slug.trim() || "your-tribe"}
+											/modules/basic_tribe_ui/install
 										</div>
 									</div>
 									<div className="card">
@@ -934,175 +1198,190 @@ function Home() {
 										<span className="small">Source: module DB</span>
 									</div>
 
-									<form className="stack" onSubmit={handleAddMember}>
-										<div className="grid">
-											<label className="stack">
-												<span className="small">Display name</span>
-												<input
-													value={memberDraft.displayName ?? ""}
-													onChange={(event) => updateMemberDraft({ displayName: event.target.value })}
-												/>
-											</label>
-											<label className="stack">
-												<span className="small">Roles</span>
-												{rolesQuery.isLoading ? (
-													<div className="small">Loading roles...</div>
-												) : rolesQuery.isError ? (
-													<div className="small">Failed to load roles.</div>
-												) : (
-													<div className="dropdown">
-														<button
-															className="dropdown-trigger"
-															type="button"
-															onClick={() => setRolesOpen((open) => !open)}
+									<label className="stack">
+										<span className="small">Search members</span>
+										<input
+											value={memberSearch}
+											onChange={(event) => setMemberSearch(event.target.value)}
+											placeholder="Name, role, wallet..."
+										/>
+									</label>
+
+									{canManageMembers ? (
+										!usingSpineMembers ? (
+											<form className="stack" onSubmit={handleAddMember}>
+											<div className="grid">
+												<label className="stack">
+													<span className="small">Display name</span>
+													<input
+														value={memberDraft.displayName ?? ""}
+														onChange={(event) => updateMemberDraft({ displayName: event.target.value })}
+													/>
+												</label>
+												<label className="stack">
+													<span className="small">Roles</span>
+													{rolesQuery.isLoading ? (
+														<div className="small">Loading roles...</div>
+													) : rolesQuery.isError ? (
+														<div className="small">Failed to load roles.</div>
+													) : (
+														<div className="dropdown">
+															<button
+																className="dropdown-trigger"
+																type="button"
+																onClick={() => setRolesOpen((open) => !open)}
+															>
+																{memberDraft.roles?.length
+																	? `${memberDraft.roles.length} selected`
+																	: "Select roles"}
+															</button>
+															{rolesOpen ? (
+																<div className="dropdown-menu">
+																	{(rolesQuery.data ?? []).map((role) => {
+																		const checked = memberDraft.roles?.includes(role.name) ?? false;
+																		return (
+																			<label key={role.id} className="dropdown-item">
+																				<input
+																					type="checkbox"
+																					checked={checked}
+																					onChange={() => toggleRole(role.name)}
+																				/>
+																				<span>{role.name}</span>
+																			</label>
+																		);
+																	})}
+																</div>
+															) : null}
+														</div>
+													)}
+												</label>
+												<label className="stack">
+													<span className="small">Global rank</span>
+													{ranksQuery.isLoading ? (
+														<div className="small">Loading ranks...</div>
+													) : ranksQuery.isError ? (
+														<div className="small">Failed to load ranks.</div>
+													) : (
+														<select
+															value={memberDraft.globalRankId ?? ""}
+															onChange={(event) =>
+																updateMemberDraft({
+																	globalRankId: event.target.value || ""
+																})
+															}
 														>
-															{memberDraft.roles?.length
-																? `${memberDraft.roles.length} selected`
-																: "Select roles"}
-														</button>
-														{rolesOpen ? (
-															<div className="dropdown-menu">
-																{(rolesQuery.data ?? []).map((role) => {
-																	const checked = memberDraft.roles?.includes(role.name) ?? false;
-																	return (
-																		<label key={role.id} className="dropdown-item">
-																			<input
-																				type="checkbox"
-																				checked={checked}
-																				onChange={() => toggleRole(role.name)}
-																			/>
-																			<span>{role.name}</span>
-																		</label>
-																	);
-																})}
-															</div>
-														) : null}
-													</div>
-												)}
-											</label>
-											<label className="stack">
-												<span className="small">Global rank</span>
-												{ranksQuery.isLoading ? (
-													<div className="small">Loading ranks...</div>
-												) : ranksQuery.isError ? (
-													<div className="small">Failed to load ranks.</div>
-												) : (
+															<option value="">None</option>
+															{globalRanks.map((rank) => (
+																<option key={rank.id} value={rank.id}>
+																	{rank.name}
+																</option>
+															))}
+														</select>
+													)}
+												</label>
+												<label className="stack">
+													<span className="small">Status</span>
 													<select
-														value={memberDraft.globalRankId ?? ""}
+														value={memberDraft.status ?? "active"}
 														onChange={(event) =>
 															updateMemberDraft({
-																globalRankId: event.target.value || ""
+																status: event.target.value as CreateMemberInput["status"]
 															})
 														}
 													>
-														<option value="">None</option>
-														{(ranksQuery.data ?? []).map((rank) => (
-															<option key={rank.id} value={rank.id}>
-																{rank.name}
-															</option>
-														))}
+														<option value="active">Active</option>
+														<option value="pending">Pending</option>
+														<option value="suspended">Suspended</option>
 													</select>
-												)}
-											</label>
-											<label className="stack">
-												<span className="small">Status</span>
-												<select
-													value={memberDraft.status ?? "active"}
-													onChange={(event) =>
-														updateMemberDraft({
-															status: event.target.value as CreateMemberInput["status"]
-														})
-													}
-												>
-													<option value="active">Active</option>
-													<option value="pending">Pending</option>
-													<option value="suspended">Suspended</option>
-												</select>
-											</label>
-											<label className="stack">
-												<span className="small">Wallet address</span>
-												<input
-													value={memberDraft.walletAddress ?? ""}
-													onChange={(event) =>
-														updateMemberDraft({ walletAddress: event.target.value })
-													}
-												/>
-											</label>
-										</div>
-											{memberDraft.roles?.length ? (
-											<div className="stack">
-												<span className="small">Role ranks</span>
-												{memberDraft.roles.map((roleName) => {
-													const role = rolesQuery.data?.find((item) => item.name === roleName);
-													const roleRankIds =
-														roleRanksQuery.data
-															?.filter((row) => row.roleId === role?.id)
-															.map((row) => row.rankId) ?? [];
-													const roleSpecific = roleRankIds.length > 0;
-													const availableRanks =
-														roleRankIds.length > 0
-															? (ranksQuery.data ?? []).filter((rank) => roleRankIds.includes(rank.id))
-															: ranksQuery.data ?? [];
-													const current = memberDraft.roleRanks?.find(
-														(entry) => entry.role === roleName
-													);
-													return (
-														<label key={roleName} className="stack">
-															<span className="small">{roleName}</span>
-															<select
-																value={current?.rankId ?? ""}
-																onChange={(event) => {
-																	const nextRankId = event.target.value;
-																	const next = [...(memberDraft.roleRanks ?? [])];
-																	const existing = next.find((entry) => entry.role === roleName);
-																	if (existing) {
-																		if (nextRankId) {
-																			existing.rankId = nextRankId;
-																		} else {
-																			const filtered = next.filter(
-																				(entry) => entry.role !== roleName
-																			);
-																			updateMemberDraft({ roleRanks: filtered });
-																			return;
-																		}
-																	} else if (nextRankId) {
-																		next.push({ role: roleName, rankId: nextRankId });
-																	}
-																	updateMemberDraft({ roleRanks: next });
-																}}
-															>
-																<option value="">None</option>
-																{availableRanks.map((rank) => (
-																	<option key={rank.id} value={rank.id}>
-																		{role?.id
-																			? resolveRoleRankName(role.id, rank.id, rank.name, roleSpecific)
-																			: rank.name}
-																	</option>
-																))}
-															</select>
-														</label>
-													);
-												})}
+												</label>
+												<label className="stack">
+													<span className="small">Wallet address</span>
+													<input
+														value={memberDraft.walletAddress ?? ""}
+														onChange={(event) =>
+															updateMemberDraft({ walletAddress: event.target.value })
+														}
+													/>
+												</label>
 											</div>
-										) : null}
-										<div className="row">
-											{canManageMembers ? (
+											{memberDraft.roles?.length ? (
+												<div className="stack">
+													<span className="small">Role ranks</span>
+													{memberDraft.roles.map((roleName) => {
+														const role = rolesQuery.data?.find((item) => item.name === roleName);
+														const roleRankIds =
+															roleRanksQuery.data
+																?.filter((row) => row.roleId === role?.id)
+																.map((row) => row.rankId) ?? [];
+														const roleSpecific = roleRankIds.length > 0;
+														const availableRanks =
+															roleRankIds.length > 0
+																? (ranksQuery.data ?? []).filter((rank) => roleRankIds.includes(rank.id))
+																: globalRanks;
+														const current = memberDraft.roleRanks?.find(
+															(entry) => entry.role === roleName
+														);
+														return (
+															<label key={roleName} className="stack">
+																<span className="small">{roleName}</span>
+																<select
+																	value={current?.rankId ?? ""}
+																	onChange={(event) => {
+																		const nextRankId = event.target.value;
+																		const next = [...(memberDraft.roleRanks ?? [])];
+																		const existing = next.find((entry) => entry.role === roleName);
+																		if (existing) {
+																			if (nextRankId) {
+																				existing.rankId = nextRankId;
+																			} else {
+																				const filtered = next.filter(
+																					(entry) => entry.role !== roleName
+																				);
+																				updateMemberDraft({ roleRanks: filtered });
+																				return;
+																			}
+																		} else if (nextRankId) {
+																			next.push({ role: roleName, rankId: nextRankId });
+																		}
+																		updateMemberDraft({ roleRanks: next });
+																	}}
+																>
+																	<option value="">None</option>
+																	{availableRanks.map((rank) => (
+																		<option key={rank.id} value={rank.id}>
+																			{role?.id
+																				? resolveRoleRankName(role.id, rank.id, rank.name, roleSpecific)
+																				: rank.name}
+																		</option>
+																	))}
+																</select>
+															</label>
+														);
+													})}
+												</div>
+											) : null}
+											<div className="row">
 												<button type="submit" disabled={createMemberMutation.isPending}>
 													{createMemberMutation.isPending ? "Saving..." : "Add member"}
 												</button>
-											) : (
-												<span className="small">You do not have access to add members.</span>
-											)}
-											{memberError ? <span className="small">{memberError}</span> : null}
-										</div>
-									</form>
+												{memberError ? <span className="small">{memberError}</span> : null}
+											</div>
+										</form>
+										) : (
+											<div className="small">Member management happens in the spine.</div>
+										)
+									) : null}
 
-									{membersQuery.isLoading ? <Loading /> : null}
-									{membersQuery.isError ? (
+									{usingSpineMembers ? (spineMembersQuery.isLoading ? <Loading /> : null) : null}
+									{!usingSpineMembers ? (membersQuery.isLoading ? <Loading /> : null) : null}
+									{usingSpineMembers && spineMembersQuery.isError ? (
+										<ErrorView title="Failed to load members" error={spineMembersQuery.error} />
+									) : null}
+									{!usingSpineMembers && membersQuery.isError ? (
 										<ErrorView title="Failed to load members" error={membersQuery.error} />
 									) : null}
 
-										{membersQuery.data ? (
+									{membersQuery.data ? (
 										<div className="table">
 											<div className="table-row table-header">
 												<span>Name</span>
@@ -1112,14 +1391,14 @@ function Home() {
 												<span>Wallet</span>
 												<span />
 											</div>
-											{membersQuery.data.map((member) => (
+											{filteredMembers.map((member) => (
 												<div className="table-row" key={member.id}>
 													<span>{member.displayName}</span>
-													<span>{member.roles.length ? member.roles.join(", ") : "—"}</span>
+													<span>{member.roles.length ? member.roles.join(", ") : "-"}</span>
 													<span>
 														{[
-															(member.globalRanks ?? []).length
-																? `Global: ${(member.globalRanks ?? []).join(", ")}`
+															member.globalRank?.name
+																? `Global: ${member.globalRank.name}`
 																: null,
 															(member.roleRanks ?? []).length
 																? member.roleRanks
@@ -1128,57 +1407,54 @@ function Home() {
 																: null
 														]
 															.filter(Boolean)
-															.join(" • ") || "—"}
+															.join(" | ") || "-"}
 													</span>
 													<span className={member.status === "active" ? "chip good" : "chip warn"}>
 														{member.status}
 													</span>
-													<span className="mono">{member.walletAddress ?? "—"}</span>
+													<span className="mono">{member.walletAddress ?? "-"}</span>
 													<span>
-														<div className="row">
-															<button
-																type="button"
-																onClick={() =>
-																	setMemberEdit({
-																		id: member.id,
-																		draft: {
-																			displayName: member.displayName,
-																			status: member.status,
-																			walletAddress: member.walletAddress ?? "",
-																			roles: member.roles,
-																			globalRankId:
-																				ranksQuery.data?.find(
-																					(rank) => rank.name === member.globalRanks?.[0]
-																				)?.id ?? "",
-																			roleRanks: (member.roleRanks ?? []).map((entry) => ({
-																				role: entry.role,
-																				rankId:
-																					ranksQuery.data?.find((rank) => rank.name === entry.rank)
-																						?.id ?? ""
-																			}))
-																		},
-																		readonly: !canManageMembers
-																	})
-																}
-															>
-																{canManageMembers ? "Edit" : "View"}
-															</button>
-															{canManageMembers ? (
+														{!usingSpineMembers ? (
+															<div className="row">
 																<button
 																	type="button"
-																	onClick={() => deleteMemberMutation.mutate(member.id)}
-																	disabled={deleteMemberMutation.isPending}
+																	onClick={() =>
+																		setMemberEdit({
+																			id: member.id,
+																			draft: {
+																				displayName: member.displayName,
+																				status: member.status,
+																				walletAddress: member.walletAddress ?? "",
+																				roles: member.roles,
+																				globalRankId: member.globalRank?.id ?? "",
+																				roleRanks: (member.roleRanks ?? []).map((entry) => ({
+																					role: entry.role,
+																					rankId: entry.rankId
+																				}))
+																			},
+																			readonly: !canManageMembers
+																		})
+																	}
 																>
-																	Remove
+																	{canManageMembers ? "Edit" : "View"}
 																</button>
-															) : null}
-														</div>
+																{canManageMembers ? (
+																	<button
+																		type="button"
+																		onClick={() => deleteMemberMutation.mutate(member.id)}
+																		disabled={deleteMemberMutation.isPending}
+																	>
+																		Remove
+																	</button>
+																) : null}
+															</div>
+														) : null}
 													</span>
 												</div>
 											))}
 										</div>
 									) : null}
-									{memberEdit ? (
+									{memberEdit && !usingSpineMembers ? (
 										<div className="card subtle">
 											<div style={{ fontWeight: 700, marginBottom: 6 }}>
 												{memberEdit.readonly ? "Member profile" : "Edit member"}
@@ -1259,7 +1535,7 @@ function Home() {
 																}
 															>
 																<option value="">None</option>
-																{(ranksQuery.data ?? []).map((rank) => (
+																{globalRanks.map((rank) => (
 																	<option key={rank.id} value={rank.id}>
 																		{rank.name}
 																	</option>
@@ -1296,15 +1572,15 @@ function Home() {
 															<span className="small">Role ranks</span>
 															{memberEdit.draft.roles.map((roleName) => {
 																const role = rolesQuery.data?.find((item) => item.name === roleName);
-																const roleRankIds =
-																	roleRanksQuery.data
-																		?.filter((row) => row.roleId === role?.id)
-																		.map((row) => row.rankId) ?? [];
-																const roleSpecific = roleRankIds.length > 0;
-																const availableRanks =
-																	roleRankIds.length > 0
-																		? (ranksQuery.data ?? []).filter((rank) => roleRankIds.includes(rank.id))
-																		: ranksQuery.data ?? [];
+															const roleRankIds =
+																roleRanksQuery.data
+																	?.filter((row) => row.roleId === role?.id)
+																	.map((row) => row.rankId) ?? [];
+															const roleSpecific = roleRankIds.length > 0;
+															const availableRanks =
+																roleRankIds.length > 0
+																	? (ranksQuery.data ?? []).filter((rank) => roleRankIds.includes(rank.id))
+																	: globalRanks;
 																const current = memberEdit.draft.roleRanks?.find(
 																	(entry) => entry.role === roleName
 																);
@@ -1366,6 +1642,14 @@ function Home() {
 									<div className="card">
 										<div style={{ fontWeight: 700, marginBottom: 6 }}>Roles</div>
 										<div className="small">Pick a role to configure ranks for that role.</div>
+										<label className="stack">
+											<span className="small">Search roles</span>
+											<input
+												value={roleSearch}
+												onChange={(event) => setRoleSearch(event.target.value)}
+												placeholder="Name or description"
+											/>
+										</label>
 										{rolesQuery.isLoading ? <Loading /> : null}
 										{rolesQuery.isError ? (
 											<ErrorView title="Failed to load roles" error={rolesQuery.error} />
@@ -1384,10 +1668,7 @@ function Home() {
 														Global ranks
 													</button>
 												</li>
-												{roleOrder
-													.map((id) => rolesQuery.data.find((role) => role.id === id))
-													.filter(Boolean)
-													.map((role) => (
+												{orderedFilteredRoles.map((role) => (
 													<li
 														key={role.id}
 														draggable={canManageRoles}
@@ -1423,6 +1704,11 @@ function Home() {
 														</button>
 													</li>
 												))}
+												{!orderedFilteredRoles.length ? (
+													<li>
+														<span className="small">No roles match your search.</span>
+													</li>
+												) : null}
 											</ul>
 										) : null}
 									</div>
@@ -1437,90 +1723,87 @@ function Home() {
 										</div>
 										{selectedRoleId ? (
 											<div className="stack">
-												<label className="row">
-													<input
-														type="checkbox"
-														checked={
-															(roleRanksQuery.data ?? []).filter(
-																(row) => row.roleId === selectedRoleId
-															).length === 0
-														}
-														disabled={!canManageRoles}
-														onChange={(event) => {
-															if (event.target.checked) {
-																updateRoleRanksMutation.mutate({
-																	roleId: selectedRoleId,
-																	rankIds: []
-																});
+												{canManageRoles ? (
+													<label className="row">
+														<input
+															type="checkbox"
+															checked={isUsingGlobalRanks}
+															onChange={(event) => {
+																if (event.target.checked) {
+																	updateRoleRanksMutation.mutate({
+																		roleId: selectedRoleId,
+																		rankIds: []
+																	});
 															} else {
-																const globalRankIds = (ranksQuery.data ?? []).map((rank) => rank.id);
+																const globalRankIds = globalRanks.map((rank) => rank.id);
+																const roleRankIds = roleSpecificRanks.map((rank) => rank.id);
 																updateRoleRanksMutation.mutate({
 																	roleId: selectedRoleId,
-																	rankIds: globalRankIds
+																	rankIds: [...globalRankIds, ...roleRankIds]
 																});
 															}
 														}}
 													/>
-													<span className="small">Use global ranks</span>
-												</label>
-												{(roleRanksQuery.data ?? []).filter(
-													(row) => row.roleId === selectedRoleId
-												).length === 0 ? (
+														<span className="small">Use global ranks</span>
+													</label>
+												) : null}
+												{isUsingGlobalRanks ? (
 													<div className="small">Using global ranks.</div>
 												) : (
-													<div className="dropdown">
-														<button
-															className="dropdown-trigger"
-															type="button"
-															onClick={() => setRankRolesOpen((open) => !open)}
-															disabled={!canManageRoles}
-														>
-															Select ranks for this role
-														</button>
-														{rankRolesOpen ? (
-															<div className="dropdown-menu">
-																{(ranksQuery.data ?? []).map((rank) => {
-																	const checked = (roleRanksQuery.data ?? []).some(
-																		(row) => row.roleId === selectedRoleId && row.rankId === rank.id
-																	);
-																	return (
-																		<label key={rank.id} className="dropdown-item">
-																			<input
-																				type="checkbox"
-																				checked={checked}
-																				disabled={!canManageRoles}
-																				onChange={() => {
-																					const existing = (roleRanksQuery.data ?? [])
-																						.filter((row) => row.roleId === selectedRoleId)
-																						.map((row) => row.rankId);
-																					const next = new Set(existing);
-																					if (next.has(rank.id)) {
-																						next.delete(rank.id);
-																					} else {
-																						next.add(rank.id);
-																					}
-																					updateRoleRanksMutation.mutate({
-																						roleId: selectedRoleId,
-																						rankIds: Array.from(next)
-																					});
-																				}}
-																			/>
-																			<span>{rank.name}</span>
-																		</label>
-																	);
-																})}
+													<>
+														{canManageRoles ? (
+															<div className="dropdown">
+																<button
+																	className="dropdown-trigger"
+																	type="button"
+																	onClick={() => setRankRolesOpen((open) => !open)}
+																>
+																	Select ranks for this role
+																</button>
+																{rankRolesOpen ? (
+																	<div className="dropdown-menu">
+																	{selectableRoleRanks.map((rank) => {
+																			const checked = (roleRanksQuery.data ?? []).some(
+																				(row) => row.roleId === selectedRoleId && row.rankId === rank.id
+																			);
+																			return (
+																				<label key={rank.id} className="dropdown-item">
+																					<input
+																						type="checkbox"
+																						checked={checked}
+																						onChange={() => {
+																							const existing = (roleRanksQuery.data ?? [])
+																								.filter((row) => row.roleId === selectedRoleId)
+																								.map((row) => row.rankId);
+																							const next = new Set(existing);
+																							if (next.has(rank.id)) {
+																								next.delete(rank.id);
+																							} else {
+																								next.add(rank.id);
+																							}
+																							updateRoleRanksMutation.mutate({
+																								roleId: selectedRoleId,
+																								rankIds: Array.from(next)
+																							});
+																						}}
+																					/>
+																					<span>{rank.name}</span>
+																				</label>
+																			);
+																		})}
+																	</div>
+																) : null}
 															</div>
 														) : null}
-													</div>
+													</>
 												)}
-												{(rolesQuery.data ?? []).length > 1 ? (
+												{canManageRoles && (rolesQuery.data ?? []).length > 1 ? (
 													<div className="stack">
 														<span className="small">Copy ranks from role</span>
 														<div className="row">
 															<select
 																value={copyRoleId}
 																onChange={(event) => setCopyRoleId(event.target.value)}
-																disabled={!canManageRoles}
 															>
 																<option value="">Select role</option>
 																{(rolesQuery.data ?? [])
@@ -1534,13 +1817,13 @@ function Home() {
 															<button
 																type="button"
 																onClick={handleCopyRoleRanks}
-																disabled={!copyRoleId || !canManageRoles}
+																disabled={!copyRoleId}
 															>
 																Copy
 															</button>
 														</div>
 														<span className="small">
-															Copying replaces the role-specific ranks and clears custom names.
+															Copying pulls global ranks and their custom names from the source role.
 														</span>
 													</div>
 												) : null}
@@ -1562,6 +1845,7 @@ function Home() {
 																	(item) => item.id === rankId
 																);
 																const customName = roleRankOverrideDraft[rankId] ?? "";
+																const isRoleSpecificRank = roleSpecificRankIds.has(rankId);
 																return (
 																	<div
 																		className="table-row"
@@ -1582,19 +1866,24 @@ function Home() {
 																			handleRoleRankReorder(dragId, rankId);
 																		}}
 																	>
-																		<span>{rank?.name ?? "—"}</span>
-																		<input
-																			value={customName}
-																			placeholder="Use global name"
-																			disabled={!canManageRoles}
-																			onChange={(event) => {
-																				const value = event.target.value;
-																				setRoleRankOverrideDraft((prev) => ({
-																					...prev,
-																					[rankId]: value
-																				}));
-																			}}
-																		/>
+																		<span>{rank?.name ?? "-"}</span>
+																		{isRoleSpecificRank ? (
+																			<span>-</span>
+																		) : canManageRoles ? (
+																			<input
+																				value={customName}
+																				placeholder="Use global name"
+																				onChange={(event) => {
+																					const value = event.target.value;
+																					setRoleRankOverrideDraft((prev) => ({
+																						...prev,
+																						[rankId]: value
+																					}));
+																				}}
+																			/>
+																		) : (
+																			<span>{customName || "-"}</span>
+																		)}
 																		<span />
 																	</div>
 																);
@@ -1604,81 +1893,163 @@ function Home() {
 												{(roleRanksQuery.data ?? []).some(
 													(row) => row.roleId === selectedRoleId
 												) ? (
-													<div className="row">
-														<button
-															type="button"
-															onClick={() => {
-																const overrides = Object.entries(roleRankOverrideDraft)
-																	.filter(([, value]) => value.trim())
-																	.map(([rankId, name]) => ({
-																		rankId,
-																		name
-																	}));
-																updateRoleRankOverridesMutation.mutate({
-																	roleId: selectedRoleId,
-																	overrides
-																});
-															}}
-															disabled={!canManageRoles || updateRoleRankOverridesMutation.isPending}
-														>
-															Save custom names
-														</button>
+													<>
+														{canManageRoles ? (
+															<div className="row">
+																<button
+																	type="button"
+																	onClick={() => {
+																		const overrides = Object.entries(roleRankOverrideDraft)
+																			.filter(([, value]) => value.trim())
+																			.map(([rankId, name]) => ({
+																				rankId,
+																				name
+																			}));
+																		updateRoleRankOverridesMutation.mutate({
+																			roleId: selectedRoleId,
+																			overrides
+																		});
+																	}}
+																	disabled={updateRoleRankOverridesMutation.isPending}
+																>
+																	Save custom names
+																</button>
+															</div>
+														) : null}
+													</>
+												) : null}
+												{canManageRoles && !isUsingGlobalRanks ? (
+													<div className="stack">
+														<div style={{ fontWeight: 600 }}>Role-only ranks</div>
+														<form className="stack" onSubmit={handleSaveRoleRank}>
+															<label className="stack">
+																<span className="small">Rank name</span>
+																<input
+																	value={roleRankDraft.name}
+																	onChange={(event) =>
+																		updateRoleRankDraft({ name: event.target.value })
+																	}
+																/>
+															</label>
+															<label className="stack">
+																<span className="small">Description</span>
+																<input
+																	value={roleRankDraft.description}
+																	onChange={(event) =>
+																		updateRoleRankDraft({ description: event.target.value })
+																	}
+																/>
+															</label>
+															<div className="row">
+																<button
+																	type="submit"
+																	disabled={createRankMutation.isPending || updateRankMutation.isPending}
+																>
+																	{roleRankDraft.id ? "Update rank" : "Add role rank"}
+																</button>
+																{roleRankDraft.id ? (
+																	<button
+																		type="button"
+																		onClick={() => setRoleRankDraft({ name: "", description: "" })}
+																	>
+																		Cancel
+																	</button>
+																) : null}
+															</div>
+														</form>
+														{rankError ? <span className="small">{rankError}</span> : null}
+														{orderedRoleSpecificRanks.length ? (
+															<div className="table table-3">
+																<div className="table-row table-header">
+																	<span>Rank</span>
+																	<span>Description</span>
+																	<span />
+																</div>
+																{orderedRoleSpecificRanks.map((rank) => (
+																	<div className="table-row" key={rank.id}>
+																		<span>{rank.name}</span>
+																		<span>{rank.description ?? "-"}</span>
+																		<span className="row">
+																			<button
+																				type="button"
+																				onClick={() =>
+																					setRoleRankDraft({
+																						id: rank.id,
+																						name: rank.name,
+																						description: rank.description ?? ""
+																					})
+																				}
+																			>
+																				Edit
+																			</button>
+																			<button
+																				type="button"
+																				onClick={() => deleteRankMutation.mutate(rank.id)}
+																				disabled={deleteRankMutation.isPending}
+																			>
+																				Remove
+																			</button>
+																		</span>
+																	</div>
+																))}
+															</div>
+														) : (
+															<span className="small">No role-only ranks yet.</span>
+														)}
 													</div>
 												) : null}
 											</div>
 										) : (
 											<div className="stack">
-												<form className="stack" onSubmit={handleSaveRank}>
-													<label className="stack">
-														<span className="small">Rank name</span>
-														<input
-															value={rankDraft.name}
-															onChange={(event) => updateRankDraft({ name: event.target.value })}
-															disabled={!canManageRoles}
-														/>
-													</label>
-													<label className="stack">
-														<span className="small">Sort order</span>
-														<input
-															type="number"
-															value={rankDraft.sortOrder || ""}
-															onChange={(event) =>
-																updateRankDraft({ sortOrder: Number(event.target.value) })
-															}
-															disabled={!canManageRoles}
-														/>
-													</label>
-													<label className="stack">
-														<span className="small">Description</span>
-														<input
-															value={rankDraft.description}
-															onChange={(event) =>
-																updateRankDraft({ description: event.target.value })
-															}
-															disabled={!canManageRoles}
-														/>
-													</label>
-													<div className="row">
-														<button
-															type="submit"
-															disabled={!canManageRoles || createRankMutation.isPending || updateRankMutation.isPending}
-														>
-															{rankDraft.id ? "Update rank" : "Add rank"}
-														</button>
-														{rankDraft.id ? (
-															<button
-																type="button"
-																onClick={() =>
-																	setRankDraft({ name: "", description: "", sortOrder: 0 })
+												{canManageRoles ? (
+													<form className="stack" onSubmit={handleSaveRank}>
+														<label className="stack">
+															<span className="small">Rank name</span>
+															<input
+																value={rankDraft.name}
+																onChange={(event) => updateRankDraft({ name: event.target.value })}
+															/>
+														</label>
+														<label className="stack">
+															<span className="small">Sort order</span>
+															<input
+																type="number"
+																value={rankDraft.sortOrder || ""}
+																onChange={(event) =>
+																	updateRankDraft({ sortOrder: Number(event.target.value) })
 																}
-																disabled={!canManageRoles}
+															/>
+														</label>
+														<label className="stack">
+															<span className="small">Description</span>
+															<input
+																value={rankDraft.description}
+																onChange={(event) =>
+																	updateRankDraft({ description: event.target.value })
+																}
+															/>
+														</label>
+														<div className="row">
+															<button
+																type="submit"
+																disabled={createRankMutation.isPending || updateRankMutation.isPending}
 															>
-																Cancel
+																{rankDraft.id ? "Update rank" : "Add rank"}
 															</button>
-														) : null}
-													</div>
-													{rankError ? <span className="small">{rankError}</span> : null}
-												</form>
+															{rankDraft.id ? (
+																<button
+																	type="button"
+																	onClick={() =>
+																		setRankDraft({ name: "", description: "", sortOrder: 0 })
+																	}
+																>
+																	Cancel
+																</button>
+															) : null}
+														</div>
+														{rankError ? <span className="small">{rankError}</span> : null}
+													</form>
+												) : null}
 												{ranksQuery.data ? (
 													<div className="table table-3">
 														<div className="table-row table-header">
@@ -1710,29 +2081,32 @@ function Home() {
 																}}
 															>
 																<span>{rank.name}</span>
-																<span>{rank.description ?? "—"}</span>
+																<span>{rank.description ?? "-"}</span>
 																<span className="row">
-																	<button
-																		type="button"
-																		onClick={() =>
-																			setRankDraft({
-																				id: rank.id,
-																				name: rank.name,
-																				description: rank.description ?? "",
-																				sortOrder: rank.sortOrder ?? 0
-																			})
-																		}
-																		disabled={!canManageRoles}
-																	>
-																		Edit
-																	</button>
-																	<button
-																		type="button"
-																		onClick={() => deleteRankMutation.mutate(rank.id)}
-																		disabled={!canManageRoles || deleteRankMutation.isPending}
-																	>
-																		Remove
-																	</button>
+																	{canManageRoles ? (
+																		<>
+																			<button
+																				type="button"
+																				onClick={() =>
+																					setRankDraft({
+																						id: rank.id,
+																						name: rank.name,
+																						description: rank.description ?? "",
+																						sortOrder: rank.sortOrder ?? 0
+																					})
+																				}
+																			>
+																				Edit
+																			</button>
+																			<button
+																				type="button"
+																				onClick={() => deleteRankMutation.mutate(rank.id)}
+																				disabled={deleteRankMutation.isPending}
+																			>
+																				Remove
+																			</button>
+																		</>
+																	) : null}
 																</span>
 															</div>
 														))}
@@ -1741,162 +2115,173 @@ function Home() {
 											</div>
 										)}
 									</div>
-									<div className="card">
-										<div style={{ fontWeight: 700, marginBottom: 6 }}>Role management</div>
-										<div className="small">
-											Role assignment appears only if your access list permits.
-										</div>
-										<form className="stack" onSubmit={handleSaveRole}>
-											<label className="stack">
-												<span className="small">Role name</span>
-												<input
-													value={roleDraft.name}
-													onChange={(event) => updateRoleDraft({ name: event.target.value })}
-													disabled={!canManageRoles}
-												/>
-											</label>
-											<label className="stack">
-												<span className="small">Sort order</span>
-												<input
-													type="number"
-													value={roleDraft.sortOrder || ""}
-													onChange={(event) =>
-														updateRoleDraft({ sortOrder: Number(event.target.value) })
-													}
-													disabled={!canManageRoles}
-												/>
-											</label>
-											<label className="stack">
-												<span className="small">Description</span>
-												<input
-													value={roleDraft.description}
-													onChange={(event) => updateRoleDraft({ description: event.target.value })}
-													disabled={!canManageRoles}
-												/>
-											</label>
-											<div className="row">
-												<button
-													type="submit"
-													disabled={!canManageRoles || createRoleMutation.isPending || updateRoleMutation.isPending}
-												>
-													{roleDraft.id ? "Update role" : "Add role"}
-												</button>
-												{roleDraft.id ? (
-													<>
-														<button
-															type="button"
-															onClick={() => setRoleDraft({ name: "", description: "", sortOrder: 0 })}
-															disabled={!canManageRoles}
-														>
-															Cancel
-														</button>
-														<button
-															type="button"
-															onClick={() => deleteRoleMutation.mutate(roleDraft.id as string)}
-															disabled={!canManageRoles || deleteRoleMutation.isPending}
-														>
-															Delete role
-														</button>
-													</>
-												) : null}
+									{canManageRoles ? (
+										<div className="card">
+											<div style={{ fontWeight: 700, marginBottom: 6 }}>Role management</div>
+											<div className="small">
+												Role assignment appears only if your access list permits.
 											</div>
-											{roleError ? <span className="small">{roleError}</span> : null}
-										</form>
-									</div>
+											<form className="stack" onSubmit={handleSaveRole}>
+												<label className="stack">
+													<span className="small">Role name</span>
+													<input
+														value={roleDraft.name}
+														onChange={(event) => updateRoleDraft({ name: event.target.value })}
+													/>
+												</label>
+												<label className="stack">
+													<span className="small">Sort order</span>
+													<input
+														type="number"
+														value={roleDraft.sortOrder || ""}
+														onChange={(event) =>
+															updateRoleDraft({ sortOrder: Number(event.target.value) })
+														}
+													/>
+												</label>
+												<label className="stack">
+													<span className="small">Description</span>
+													<input
+														value={roleDraft.description}
+														onChange={(event) => updateRoleDraft({ description: event.target.value })}
+													/>
+												</label>
+												<div className="row">
+													<button
+														type="submit"
+														disabled={createRoleMutation.isPending || updateRoleMutation.isPending}
+													>
+														{roleDraft.id ? "Update role" : "Add role"}
+													</button>
+													{roleDraft.id ? (
+														<>
+															<button
+																type="button"
+																onClick={() =>
+																	setRoleDraft({ name: "", description: "", sortOrder: 0 })
+																}
+															>
+																Cancel
+															</button>
+															<button
+																type="button"
+																onClick={() => deleteRoleMutation.mutate(roleDraft.id as string)}
+																disabled={deleteRoleMutation.isPending}
+															>
+																Delete role
+															</button>
+														</>
+													) : null}
+												</div>
+												{roleError ? <span className="small">{roleError}</span> : null}
+											</form>
+										</div>
+									) : null}
 								</div>
 							) : null}
 
 							{memberSection === "access" ? (
 								<div className="grid">
-									<div className="card">
-										<div style={{ fontWeight: 700, marginBottom: 6 }}>Access list</div>
-										<div className="small">Access lists map roles to permissions.</div>
-										<form className="stack" onSubmit={handleSaveAccess}>
-											<label className="stack">
-												<span className="small">Access list name</span>
-												<input
-													value={accessDraft.name}
-													onChange={(event) => updateAccessDraft({ name: event.target.value })}
-													disabled={!canManageAccessLists}
-												/>
-											</label>
-											<label className="stack">
-												<span className="small">Description</span>
-												<input
-													value={accessDraft.description}
-													onChange={(event) => updateAccessDraft({ description: event.target.value })}
-													disabled={!canManageAccessLists}
-												/>
-											</label>
-											<label className="stack">
-												<span className="small">Roles</span>
-												{rolesQuery.isLoading ? (
-													<div className="small">Loading roles...</div>
-												) : rolesQuery.isError ? (
-													<div className="small">Failed to load roles.</div>
-												) : (
-													<div className="dropdown">
-														<button
-															className="dropdown-trigger"
-															type="button"
-															onClick={() => setAccessRolesOpen((open) => !open)}
-															disabled={!canManageAccessLists}
-														>
-															{accessDraft.roles.length
-																? `${accessDraft.roles.length} selected`
-																: "Select roles"}
-														</button>
-														{accessRolesOpen ? (
-															<div className="dropdown-menu">
-																{(rolesQuery.data ?? []).map((role) => {
-																	const checked = accessDraft.roles.includes(role.name);
-																	return (
-																		<label key={role.id} className="dropdown-item">
-																			<input
-																				type="checkbox"
-																				checked={checked}
-																				disabled={!canManageAccessLists}
-																				onChange={() => {
-																					const next = new Set(accessDraft.roles);
-																					if (next.has(role.name)) {
-																						next.delete(role.name);
-																					} else {
-																						next.add(role.name);
-																					}
-																					updateAccessDraft({ roles: Array.from(next) });
-																				}}
-																			/>
-																			<span>{role.name}</span>
-																		</label>
-																	);
-																})}
-															</div>
-														) : null}
-													</div>
-												)}
-											</label>
-											<div className="row">
-												<button
-													type="submit"
-													disabled={!canManageAccessLists || createAccessMutation.isPending || updateAccessMutation.isPending}
-												>
-													{accessDraft.id ? "Update access list" : "Add access list"}
-												</button>
-												{accessDraft.id ? (
+									{canManageAccessLists ? (
+										<div className="card">
+											<div style={{ fontWeight: 700, marginBottom: 6 }}>Access list</div>
+											<div className="small">Access lists map roles to permissions.</div>
+											<form className="stack" onSubmit={handleSaveAccess}>
+												<label className="stack">
+													<span className="small">Access list name</span>
+													<input
+														value={accessDraft.name}
+														onChange={(event) => updateAccessDraft({ name: event.target.value })}
+													/>
+												</label>
+												<label className="stack">
+													<span className="small">Description</span>
+													<input
+														value={accessDraft.description}
+														onChange={(event) =>
+															updateAccessDraft({ description: event.target.value })
+														}
+													/>
+												</label>
+												<label className="stack">
+													<span className="small">Roles</span>
+													{rolesQuery.isLoading ? (
+														<div className="small">Loading roles...</div>
+													) : rolesQuery.isError ? (
+														<div className="small">Failed to load roles.</div>
+													) : (
+														<div className="dropdown">
+															<button
+																className="dropdown-trigger"
+																type="button"
+																onClick={() => setAccessRolesOpen((open) => !open)}
+															>
+																{accessDraft.roles.length
+																	? `${accessDraft.roles.length} selected`
+																	: "Select roles"}
+															</button>
+															{accessRolesOpen ? (
+																<div className="dropdown-menu">
+																	{(rolesQuery.data ?? []).map((role) => {
+																		const checked = accessDraft.roles.includes(role.name);
+																		return (
+																			<label key={role.id} className="dropdown-item">
+																				<input
+																					type="checkbox"
+																					checked={checked}
+																					onChange={() => {
+																						const next = new Set(accessDraft.roles);
+																						if (next.has(role.name)) {
+																							next.delete(role.name);
+																						} else {
+																							next.add(role.name);
+																						}
+																						updateAccessDraft({
+																							roles: Array.from(next)
+																						});
+																					}}
+																				/>
+																				<span>{role.name}</span>
+																			</label>
+																		);
+																	})}
+																</div>
+															) : null}
+														</div>
+													)}
+												</label>
+												<div className="row">
 													<button
-														type="button"
-														onClick={() => setAccessDraft({ name: "", description: "", roles: [] })}
-														disabled={!canManageAccessLists}
+														type="submit"
+														disabled={createAccessMutation.isPending || updateAccessMutation.isPending}
 													>
-														Cancel
+														{accessDraft.id ? "Update access list" : "Add access list"}
 													</button>
-												) : null}
-											</div>
-											{accessError ? <span className="small">{accessError}</span> : null}
-										</form>
-									</div>
+													{accessDraft.id ? (
+														<button
+															type="button"
+															onClick={() =>
+																setAccessDraft({ name: "", description: "", roles: [] })
+															}
+														>
+															Cancel
+														</button>
+													) : null}
+												</div>
+												{accessError ? <span className="small">{accessError}</span> : null}
+											</form>
+										</div>
+									) : null}
 									<div className="card">
 										<div style={{ fontWeight: 700, marginBottom: 6 }}>Access lists</div>
+										<label className="stack">
+											<span className="small">Search access lists</span>
+											<input
+												value={accessSearch}
+												onChange={(event) => setAccessSearch(event.target.value)}
+												placeholder="Name, role, description"
+											/>
+										</label>
 										{accessListsQuery.isLoading ? <Loading /> : null}
 										{accessListsQuery.isError ? (
 											<ErrorView title="Failed to load access lists" error={accessListsQuery.error} />
@@ -1908,32 +2293,35 @@ function Home() {
 													<span>Roles</span>
 													<span />
 												</div>
-												{accessListsQuery.data.map((accessList) => (
+												{filteredAccessLists.map((accessList) => (
 													<div className="table-row" key={accessList.id}>
 														<span>{accessList.name}</span>
-														<span>{accessList.roles.length ? accessList.roles.join(", ") : "—"}</span>
+														<span>{accessList.roles.length ? accessList.roles.join(", ") : "-"}</span>
 														<span className="row">
-															<button
-																type="button"
-																onClick={() =>
-																	setAccessDraft({
-																		id: accessList.id,
-																		name: accessList.name,
-																		description: accessList.description ?? "",
-																		roles: accessList.roles ?? []
-																	})
-																}
-																disabled={!canManageAccessLists}
-															>
-																Edit
-															</button>
-															<button
-																type="button"
-																onClick={() => deleteAccessMutation.mutate(accessList.id)}
-																disabled={!canManageAccessLists || deleteAccessMutation.isPending}
-															>
-																Remove
-															</button>
+															{canManageAccessLists ? (
+																<>
+																	<button
+																		type="button"
+																		onClick={() =>
+																			setAccessDraft({
+																				id: accessList.id,
+																				name: accessList.name,
+																				description: accessList.description ?? "",
+																				roles: accessList.roles ?? []
+																			})
+																		}
+																	>
+																		Edit
+																	</button>
+																	<button
+																		type="button"
+																		onClick={() => deleteAccessMutation.mutate(accessList.id)}
+																		disabled={deleteAccessMutation.isPending}
+																	>
+																		Remove
+																	</button>
+																</>
+															) : null}
 														</span>
 													</div>
 												))}
@@ -1946,39 +2334,38 @@ function Home() {
 					)}
 				</div>
 			) : (
-				<form className="stack" onSubmit={onLogin}>
-					<div className="small">Fake login for MVP exploration.</div>
-					<div className="grid">
-						<label className="stack">
-							<span className="small">Name</span>
-							<input
-								autoComplete="username"
-								value={username}
-								onChange={(event) => setUsername(event.target.value)}
-							/>
-						</label>
-						<label className="stack">
-							<span className="small">Password</span>
-							<input
-								type="password"
-								autoComplete="current-password"
-								value={password}
-								onChange={(event) => setPassword(event.target.value)}
-							/>
-						</label>
+				<div className="stack">
+					<div className="card subtle">
+						<div style={{ fontWeight: 700, marginBottom: 6 }}>Admin login</div>
+						<div className="small">Discord OAuth only for spine-level access.</div>
+						{!env.apiBaseUrl ? (
+							<div className="small">Set `VITE_API_BASE_URL` to enable login.</div>
+						) : meQuery.isLoading ? (
+							<Loading />
+						) : meQuery.data ? (
+							<div className="row">
+								<button type="button" onClick={enterAdminPortal}>
+									Enter admin portal
+								</button>
+							</div>
+						) : (
+							<div className="row">
+								<button type="button" onClick={goToDiscordAuth}>
+									Sign in with Discord
+								</button>
+							</div>
+						)}
 					</div>
-					<div className="row">
-						<button type="submit">Enter</button>
-						{error ? <span className="small">{error}</span> : null}
-					</div>
-					<div className="row" style={{ flexWrap: "wrap" }}>
-						{personas.map((persona) => (
-							<button type="button" key={persona.role} onClick={() => setPersona(persona)}>
-								{persona.label}
+					<div className="card subtle">
+						<div style={{ fontWeight: 700, marginBottom: 6 }}>Member portal</div>
+						<div className="small">Member auth hooks in next. For now, browse as a guest.</div>
+						<div className="row">
+							<button type="button" onClick={enterMemberPortal}>
+								Enter member portal
 							</button>
-						))}
+						</div>
 					</div>
-				</form>
+				</div>
 			)}
 		</div>
 	);

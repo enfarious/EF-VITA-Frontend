@@ -19,6 +19,7 @@ export type Rank = {
 	name: string;
 	description?: string | null;
 	sortOrder?: number;
+	roleId?: string | null;
 };
 
 export type RoleRank = {
@@ -120,7 +121,12 @@ export async function updateRoleRankOrder(roleId: string, rankIds: string[]): Pr
 	});
 }
 
-export async function createRank(input: { name: string; description?: string; sortOrder?: number }): Promise<Rank> {
+export async function createRank(input: {
+	name: string;
+	description?: string;
+	sortOrder?: number;
+	roleId?: string | null;
+}): Promise<Rank> {
 	return moduleFetch<Rank>("/ranks", {
 		method: "POST",
 		body: input

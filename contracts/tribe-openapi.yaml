@@ -1,0 +1,7 @@
+openapi: 3.0.3
+info:
+  title: VITA Tribe API
+  version: 0.1.0
+servers:
+  - url: http://localhost:3000
+paths: {}

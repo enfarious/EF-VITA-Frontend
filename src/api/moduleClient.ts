@@ -3,14 +3,30 @@ import { env } from "@/env";
 type HttpMethod = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
 
 function resolveModuleUrl(path: string) {
-	const base = env.moduleApiBaseUrl || "/module-api";
-	if (base.startsWith("http://") || base.startsWith("https://")) {
-		return new URL(path, base).toString();
+	const moduleId = "basic_tribe_ui";
+	const overrideBase = env.moduleApiBaseUrl;
+	const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+
+	if (overrideBase) {
+		if (overrideBase.startsWith("http://") || overrideBase.startsWith("https://")) {
+			return new URL(path, overrideBase).toString();
+		}
+		const normalizedBase = overrideBase.endsWith("/") ? overrideBase.slice(0, -1) : overrideBase;
+		return `${normalizedBase}${normalizedPath}`;
 	}
 
-	const normalizedBase = base.endsWith("/") ? base.slice(0, -1) : base;
-	const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-	return `${normalizedBase}${normalizedPath}`;
+	if (!env.apiBaseUrl) {
+		throw new Error("VITE_API_BASE_URL is not set. Check your .env.");
+	}
+
+	const slug =
+		typeof window !== "undefined" ? window.localStorage.getItem("activeTenantSlug") ?? "" : "";
+	if (!slug) {
+		throw new Error("Active tenant slug is not available.");
+	}
+
+	const apiBase = env.apiBaseUrl.endsWith("/") ? env.apiBaseUrl.slice(0, -1) : env.apiBaseUrl;
+	return `${apiBase}/t/${encodeURIComponent(slug)}/m/${moduleId}${normalizedPath}`;
 }
 
 export async function moduleFetch<T>(
@@ -28,6 +44,7 @@ export async function moduleFetch<T>(
 
 	const res = await fetch(url, {
 		method: opts?.method ?? "GET",
+		credentials: "include",
 		headers: {
 			"X-Module-Auth": "true",
 			"X-Module-Role": roleHeader,

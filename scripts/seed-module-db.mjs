@@ -69,9 +69,9 @@ async function seed() {
 
 		for (const rank of ranks) {
 			await client.query(
-				`INSERT INTO ${schema}.ranks (name, sort_order, created_at, updated_at)
-				 VALUES ($1, $2, now(), now())
-				 ON CONFLICT (name) DO UPDATE SET
+				`INSERT INTO ${schema}.ranks (name, sort_order, role_id, created_at, updated_at)
+				 VALUES ($1, $2, NULL, now(), now())
+				 ON CONFLICT (name) WHERE role_id IS NULL DO UPDATE SET
 				   sort_order = EXCLUDED.sort_order,
 				   updated_at = now()`,
 				[rank.name, rank.sort]
@@ -95,7 +95,8 @@ async function seed() {
 			if (!roleId) continue;
 
 			const rankResult = await client.query(
-				`SELECT id, name FROM ${schema}.ranks WHERE name = ANY($1::text[])`,
+				`SELECT id, name FROM ${schema}.ranks
+				 WHERE role_id IS NULL AND name = ANY($1::text[])`,
 				[rankNames]
 			);
 
@@ -220,7 +221,7 @@ async function seed() {
 		}
 
 		const globalRankResult = await client.query(
-			`SELECT id FROM ${schema}.ranks WHERE name = $1`,
+			`SELECT id FROM ${schema}.ranks WHERE role_id IS NULL AND name = $1`,
 			["Veteran"]
 		);
 		const globalRankId = globalRankResult.rows[0]?.id;
@@ -254,7 +255,7 @@ async function seed() {
 				[assignment.role]
 			);
 			const rankResult = await client.query(
-				`SELECT id FROM ${schema}.ranks WHERE name = $1`,
+				`SELECT id FROM ${schema}.ranks WHERE role_id IS NULL AND name = $1`,
 				[assignment.rank]
 			);
 			const roleId = roleResult.rows[0]?.id;

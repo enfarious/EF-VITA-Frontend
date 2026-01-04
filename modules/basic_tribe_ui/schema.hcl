@@ -167,6 +167,11 @@ table "ranks" {
 		default = sql("gen_random_uuid()")
 	}
 
+	column "role_id" {
+		type = uuid
+		null = true
+	}
+
 	column "sort_order" {
 		type    = int
 		default = 0
@@ -205,9 +210,26 @@ table "ranks" {
 		columns = [column.id]
 	}
 
-	index "ranks_name_idx" {
+	index "ranks_global_name_idx" {
 		unique  = true
 		columns = [column.name]
+		where   = "role_id IS NULL"
+	}
+
+	index "ranks_role_name_idx" {
+		unique  = true
+		columns = [column.role_id, column.name]
+		where   = "role_id IS NOT NULL"
+	}
+
+	index "ranks_role_id_idx" {
+		columns = [column.role_id]
+	}
+
+	foreign_key "ranks_role_id_fkey" {
+		columns     = [column.role_id]
+		ref_columns = [table.roles.column.id]
+		on_delete   = "CASCADE"
 	}
 }
 
