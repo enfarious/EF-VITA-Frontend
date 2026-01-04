@@ -88,12 +88,20 @@ code {
 
 .table-row {
 	display: grid;
-	grid-template-columns: 1.4fr 1fr 0.5fr 0.8fr 1.2fr;
+	grid-template-columns: 1.2fr 1.1fr 1.3fr 0.8fr 1.2fr 0.8fr;
 	gap: 12px;
 	align-items: center;
 	padding: 8px 10px;
 	border-radius: 10px;
 	background: rgba(255, 255, 255, 0.02);
+}
+
+.table.table-3 .table-row {
+	grid-template-columns: 1.2fr 1.6fr 0.8fr;
+}
+
+.table-row[draggable="true"] {
+	border: 1px dashed rgba(255, 255, 255, 0.1);
 }
 
 .table-header {
@@ -128,6 +136,38 @@ code {
 	padding-left: 16px;
 }
 
+.list button {
+	width: 100%;
+	text-align: left;
+	border-radius: 8px;
+	background: transparent;
+}
+
+.list li[draggable="true"] {
+	border: 1px dashed transparent;
+	border-radius: 10px;
+	padding: 2px;
+}
+
+.list li[draggable="true"]:hover {
+	border-color: rgba(255, 255, 255, 0.15);
+}
+
+.list button.active {
+	border-color: rgba(145, 186, 255, 0.65);
+	box-shadow: 0 0 0 1px rgba(145, 186, 255, 0.2);
+}
+
+.list.columns {
+	columns: 2 180px;
+	column-gap: 24px;
+}
+
+.list.columns li {
+	break-inside: avoid;
+	margin-bottom: 6px;
+}
+
 .kv {
 	display: grid;
 	grid-template-columns: auto 1fr;
@@ -159,13 +199,62 @@ code {
 }
 
 button,
-input {
+input,
+select {
 	background: rgba(5, 8, 16, 0.9);
 	border: 1px solid rgba(255, 255, 255, 0.16);
 	border-radius: 10px;
 	color: inherit;
 	font: inherit;
 	padding: 8px 10px;
+}
+
+input[type="checkbox"] {
+	width: 16px;
+	height: 16px;
+	padding: 0;
+	border-radius: 4px;
+}
+
+.dropdown {
+	position: relative;
+}
+
+.dropdown-trigger {
+	width: 100%;
+	text-align: left;
+}
+
+.dropdown-menu {
+	position: absolute;
+	top: calc(100% + 6px);
+	left: 0;
+	right: 0;
+	z-index: 10;
+	max-height: 200px;
+	overflow: auto;
+	background: rgba(9, 12, 20, 0.98);
+	border: 1px solid rgba(255, 255, 255, 0.16);
+	border-radius: 12px;
+	padding: 8px;
+	box-shadow: 0 12px 24px rgba(0, 0, 0, 0.35);
+}
+
+.dropdown-item {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 6px;
+	border-radius: 8px;
+	cursor: pointer;
+}
+
+.dropdown-item:hover {
+	background: rgba(255, 255, 255, 0.06);
+}
+
+.dropdown-item input {
+	margin: 0;
 }
 
 button {
@@ -177,6 +266,7 @@ button:hover {
 }
 
 input:focus,
+select:focus,
 button:focus {
 	outline: 2px solid rgba(115, 164, 255, 0.5);
 	outline-offset: 1px;

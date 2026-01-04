@@ -10,7 +10,7 @@ If you *do* want to build your own frontend, EF-VITA fully supports that. This r
 
 ## What this project is
 
-- A **simple web frontend** for managing a single Tribe
+- A **simple web frontend module** for managing a single Tribe
 - A **reference implementation** of the EF-VITA API
 - A **safe default** for small to medium Tribes that want a single-tenant UI
 - A way to use EF-VITA without writing frontend code
@@ -84,6 +84,8 @@ You should build your own frontend if:
 - You simply enjoy frontend development
 
 Both approaches are first-class in EF-VITA.
+
+This frontend is also a first-party module that tenants can fork and reskin.
 
 ---
 
