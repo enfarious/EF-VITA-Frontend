@@ -2137,26 +2137,28 @@ function Home() {
 				</div>
 			) : (
 				<div className="stack">
-					<div className="card subtle">
-						<div style={{ fontWeight: 700, marginBottom: 6 }}>Member login</div>
-						<div className="small">Authenticate with Discord to access your tribe.</div>
-						{sessionQuery.isLoading ? <Loading /> : null}
-						{sessionQuery.isError ? (
-							<ErrorView title="Failed to load session" error={sessionQuery.error} />
-						) : null}
-						{spineAuthUrl ? (
-							<button
-								type="button"
-								onClick={() => {
-									window.location.href = spineAuthUrl;
-								}}
-							>
-								Sign in with Discord
-							</button>
-						) : (
-							<span className="small">Spine auth URL is not configured.</span>
-						)}
-					</div>
+					{!isAuthenticated ? (
+						<div className="card subtle">
+							<div style={{ fontWeight: 700, marginBottom: 6 }}>Member login</div>
+							<div className="small">Authenticate with Discord to access your tribe.</div>
+							{sessionQuery.isLoading ? <Loading /> : null}
+							{sessionQuery.isError ? (
+								<ErrorView title="Failed to load session" error={sessionQuery.error} />
+							) : null}
+							{spineAuthUrl ? (
+								<button
+									type="button"
+									onClick={() => {
+										window.location.href = spineAuthUrl;
+									}}
+								>
+									Sign in with Discord
+								</button>
+							) : (
+								<span className="small">Spine auth URL is not configured.</span>
+							)}
+						</div>
+					) : null}
 					{isAuthenticated ? (
 						<div className="card">
 							<div style={{ fontWeight: 700, marginBottom: 6 }}>Join this tribe</div>
