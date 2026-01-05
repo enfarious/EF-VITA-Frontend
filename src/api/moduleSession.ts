@@ -146,7 +146,17 @@ export async function submitJoinRequest(input: {
 }
 
 export async function listJoinRequests(): Promise<JoinRequest[]> {
-	return moduleFetch<JoinRequest[]>("/join-requests");
+	const payload = await moduleFetch<unknown>("/join-requests");
+	if (Array.isArray(payload)) {
+		return payload as JoinRequest[];
+	}
+	if (payload && typeof payload === "object") {
+		const requests = (payload as Record<string, unknown>).requests;
+		if (Array.isArray(requests)) {
+			return requests as JoinRequest[];
+		}
+	}
+	return [];
 }
 
 export async function approveJoinRequest(id: string): Promise<JoinRequest> {

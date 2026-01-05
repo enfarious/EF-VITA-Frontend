@@ -19,8 +19,24 @@ export type CreateMemberInput = {
 	roleRanks?: { role: string; rankId: string }[];
 };
 
+function arrayFrom<T>(payload: unknown, keys: string[]): T[] {
+	if (Array.isArray(payload)) {
+		return payload as T[];
+	}
+	if (payload && typeof payload === "object") {
+		for (const key of keys) {
+			const value = (payload as Record<string, unknown>)[key];
+			if (Array.isArray(value)) {
+				return value as T[];
+			}
+		}
+	}
+	return [];
+}
+
 export async function listMembers(): Promise<Member[]> {
-	return moduleFetch<Member[]>("/members");
+	const payload = await moduleFetch<unknown>("/members");
+	return arrayFrom<Member>(payload, ["members"]);
 }
 
 export async function createMember(input: CreateMemberInput): Promise<Member> {

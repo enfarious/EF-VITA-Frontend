@@ -34,8 +34,24 @@ export type RoleRankOverride = {
 	name: string;
 };
 
+function arrayFrom<T>(payload: unknown, keys: string[]): T[] {
+	if (Array.isArray(payload)) {
+		return payload as T[];
+	}
+	if (payload && typeof payload === "object") {
+		for (const key of keys) {
+			const value = (payload as Record<string, unknown>)[key];
+			if (Array.isArray(value)) {
+				return value as T[];
+			}
+		}
+	}
+	return [];
+}
+
 export async function listRoles(): Promise<Role[]> {
-	return moduleFetch<Role[]>("/roles");
+	const payload = await moduleFetch<unknown>("/roles");
+	return arrayFrom<Role>(payload, ["roles"]);
 }
 
 export async function createRole(input: { name: string; description?: string; sortOrder?: number }): Promise<Role> {
@@ -62,7 +78,8 @@ export async function deleteRole(id: string): Promise<void> {
 }
 
 export async function listAccessLists(): Promise<AccessList[]> {
-	return moduleFetch<AccessList[]>("/access-lists");
+	const payload = await moduleFetch<unknown>("/access-lists");
+	return arrayFrom<AccessList>(payload, ["access_lists", "accessLists"]);
 }
 
 export async function createAccessList(input: {
@@ -93,15 +110,18 @@ export async function deleteAccessList(id: string): Promise<void> {
 }
 
 export async function listRanks(): Promise<Rank[]> {
-	return moduleFetch<Rank[]>("/ranks");
+	const payload = await moduleFetch<unknown>("/ranks");
+	return arrayFrom<Rank>(payload, ["ranks"]);
 }
 
 export async function listRoleRanks(): Promise<RoleRank[]> {
-	return moduleFetch<RoleRank[]>("/role-ranks");
+	const payload = await moduleFetch<unknown>("/role-ranks");
+	return arrayFrom<RoleRank>(payload, ["role_ranks", "roleRanks"]);
 }
 
 export async function listRoleRankOverrides(): Promise<RoleRankOverride[]> {
-	return moduleFetch<RoleRankOverride[]>("/role-rank-overrides");
+	const payload = await moduleFetch<unknown>("/role-rank-overrides");
+	return arrayFrom<RoleRankOverride>(payload, ["role_rank_overrides", "roleRankOverrides"]);
 }
 
 export async function updateRoleRankOverrides(
