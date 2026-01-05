@@ -1,4 +1,5 @@
 import http from "node:http";
+import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 
 try {
@@ -25,7 +26,8 @@ function sendJson(res, status, payload) {
 		"Content-Type": "application/json",
 		"Content-Length": Buffer.byteLength(body),
 		"Access-Control-Allow-Origin": "*",
-		"Access-Control-Allow-Headers": "Content-Type, X-Module-Auth",
+		"Access-Control-Allow-Headers":
+			"Content-Type, X-Module-Auth, X-Module-Role, X-Module-User-Id, X-Module-User-Handle, X-Module-User-Avatar",
 		"Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS"
 	});
 	res.end(body);
@@ -75,6 +77,24 @@ function getRoleName(req) {
 	return raw.trim();
 }
 
+function getUserInfo(req) {
+	const id = typeof req.headers["x-module-user-id"] === "string" ? req.headers["x-module-user-id"] : "";
+	const handle =
+		typeof req.headers["x-module-user-handle"] === "string"
+			? req.headers["x-module-user-handle"]
+			: "";
+	const avatar =
+		typeof req.headers["x-module-user-avatar"] === "string"
+			? req.headers["x-module-user-avatar"]
+			: "";
+	if (!id && !handle) return null;
+	return {
+		id: id || `dev-${handle || "user"}`,
+		handle: handle || "dev-user",
+		avatarUrl: avatar || null
+	};
+}
+
 async function hasAccess(client, roleName, accessName) {
 	if (!roleName) return false;
 	const result = await client.query(
@@ -101,6 +121,84 @@ async function requireAccess(req, res, accessName) {
 	}
 	return ok;
 }
+
+async function ensureJoinRequestsTable(client) {
+	await client.query(
+		`CREATE TABLE IF NOT EXISTS ${schema}.join_requests (
+			id uuid PRIMARY KEY,
+			user_id text NOT NULL,
+			user_handle text,
+			user_avatar text,
+			character_name text NOT NULL,
+			wallet_address text,
+			note text,
+			status text NOT NULL DEFAULT 'pending',
+			created_at timestamptz NOT NULL DEFAULT now(),
+			updated_at timestamptz NOT NULL DEFAULT now()
+		)`
+	);
+}
+
+async function ensureMemberUserColumn(client) {
+	await client.query(`ALTER TABLE ${schema}.members ADD COLUMN IF NOT EXISTS user_id text`);
+}
+
+async function fetchMemberByUserId(client, userId) {
+	const result = await client.query(
+		`SELECT m.id,
+		        m.display_name,
+		        m.status,
+		        m.wallet_address,
+		        COALESCE(roles.roles, ARRAY[]::text[]) AS roles,
+		        global_rank.rank_id AS global_rank_id,
+		        global_rank.rank_name AS global_rank_name,
+		        COALESCE(role_ranks.role_ranks, '[]'::json) AS role_ranks
+		 FROM ${schema}.members m
+		 LEFT JOIN LATERAL (
+		 	SELECT array_agg(r.name) AS roles
+		 	FROM ${schema}.member_roles mr
+		 	JOIN ${schema}.roles r ON r.id = mr.role_id
+		 	WHERE mr.member_id = m.id
+		 ) roles ON true
+		 LEFT JOIN LATERAL (
+		 	SELECT mr.rank_id AS rank_id, rk.name AS rank_name
+		 	FROM ${schema}.member_ranks mr
+		 	JOIN ${schema}.ranks rk ON rk.id = mr.rank_id
+		 	WHERE mr.member_id = m.id AND mr.role_id IS NULL
+		 	LIMIT 1
+		 ) global_rank ON true
+		 LEFT JOIN LATERAL (
+		 	SELECT json_agg(
+		 		jsonb_build_object(
+		 			'role', rr.name,
+		 			'rank', COALESCE(rro.name, rk.name),
+		 			'rankId', rk.id
+		 		)
+		 	) AS role_ranks
+		 	FROM ${schema}.member_ranks mr
+		 	JOIN ${schema}.roles rr ON rr.id = mr.role_id
+		 	JOIN ${schema}.ranks rk ON rk.id = mr.rank_id
+		 	LEFT JOIN ${schema}.role_rank_overrides rro
+		 		ON rro.role_id = mr.role_id AND rro.rank_id = mr.rank_id
+		 	WHERE mr.member_id = m.id AND mr.role_id IS NOT NULL
+		 ) role_ranks ON true
+		 WHERE m.user_id = $1
+		 LIMIT 1`,
+		[userId]
+	);
+
+	if (result.rowCount === 0) return null;
+	const row = result.rows[0];
+	return {
+		id: row.id,
+		displayName: row.display_name,
+		status: row.status,
+		walletAddress: row.wallet_address,
+		roles: row.roles ?? [],
+		globalRank: row.global_rank_id ? { id: row.global_rank_id, name: row.global_rank_name } : null,
+		roleRanks: row.role_ranks ?? []
+	};
+}
 async function getVisibilityMap(client) {
 	const result = await client.query(
 		`SELECT area, is_public
@@ -119,13 +217,237 @@ const server = http.createServer(async (req, res) => {
 		if (req.method === "OPTIONS") {
 			res.writeHead(204, {
 				"Access-Control-Allow-Origin": "*",
-				"Access-Control-Allow-Headers": "Content-Type, X-Module-Auth",
+				"Access-Control-Allow-Headers":
+					"Content-Type, X-Module-Auth, X-Module-Role, X-Module-User-Id, X-Module-User-Handle, X-Module-User-Avatar",
 				"Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS"
 			});
 			res.end();
 			return;
 		}
 		const url = new URL(req.url, `http://${req.headers.host}`);
+
+		if (url.pathname === "/me") {
+			if (req.method !== "GET") return methodNotAllowed(res);
+			const user = getUserInfo(req);
+			if (!user) {
+				return sendJson(res, 200, {
+					authenticated: false,
+					user: null,
+					member: null,
+					joinRequest: null
+				});
+			}
+
+			await ensureJoinRequestsTable(pool);
+			await ensureMemberUserColumn(pool);
+
+			const member = await fetchMemberByUserId(pool, user.id);
+			const roleName = getRoleName(req);
+			const fallbackMember =
+				!member && roleName
+					? {
+							id: `dev-${user.id}`,
+							displayName: user.handle,
+							status: "active",
+							walletAddress: null,
+							roles: [roleName],
+							globalRank: null,
+							roleRanks: []
+						}
+					: null;
+
+			const joinResult = await pool.query(
+				`SELECT id,
+				        status,
+				        character_name,
+				        wallet_address,
+				        note,
+				        created_at
+				 FROM ${schema}.join_requests
+				 WHERE user_id = $1
+				 ORDER BY created_at DESC
+				 LIMIT 1`,
+				[user.id]
+			);
+
+			const joinRequest = joinResult.rowCount
+				? {
+						id: joinResult.rows[0].id,
+						status: joinResult.rows[0].status,
+						characterName: joinResult.rows[0].character_name,
+						walletAddress: joinResult.rows[0].wallet_address,
+						note: joinResult.rows[0].note,
+						createdAt: joinResult.rows[0].created_at
+					}
+				: null;
+
+			return sendJson(res, 200, {
+				authenticated: true,
+				user,
+				member: member ?? fallbackMember,
+				joinRequest: member ? null : joinRequest
+			});
+		}
+
+		if (url.pathname === "/join") {
+			if (req.method !== "POST") return methodNotAllowed(res);
+			const user = getUserInfo(req);
+			if (!user) return sendJson(res, 401, { message: "Authentication required." });
+			const payload = await readJson(req);
+			const characterName = payload?.character_name;
+
+			if (!characterName || typeof characterName !== "string") {
+				return sendJson(res, 400, { message: "character_name is required." });
+			}
+
+			const walletAddress =
+				typeof payload?.wallet_address === "string" && payload.wallet_address.trim()
+					? payload.wallet_address.trim()
+					: null;
+			const note = typeof payload?.note === "string" ? payload.note.trim() : null;
+
+			await ensureJoinRequestsTable(pool);
+			await ensureMemberUserColumn(pool);
+
+			const existing = await pool.query(
+				`SELECT id, status FROM ${schema}.join_requests
+				 WHERE user_id = $1 AND status = 'pending'
+				 LIMIT 1`,
+				[user.id]
+			);
+
+			if (existing.rowCount > 0) {
+				return sendJson(res, 409, { message: "Join request already pending." });
+			}
+
+			const id = randomUUID();
+			await pool.query(
+				`INSERT INTO ${schema}.join_requests
+				 (id, user_id, user_handle, user_avatar, character_name, wallet_address, note, status, created_at, updated_at)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', now(), now())`,
+				[id, user.id, user.handle, user.avatarUrl, characterName.trim(), walletAddress, note]
+			);
+
+			return sendJson(res, 201, {
+				id,
+				status: "pending",
+				characterName: characterName.trim(),
+				walletAddress,
+				note,
+				createdAt: new Date().toISOString()
+			});
+		}
+
+		if (url.pathname === "/join-requests") {
+			if (req.method !== "GET") return methodNotAllowed(res);
+			if (!(await requireAccess(req, res, "manage_members"))) return;
+			await ensureJoinRequestsTable(pool);
+			const result = await pool.query(
+				`SELECT id,
+				        status,
+				        character_name,
+				        wallet_address,
+				        note,
+				        created_at
+				 FROM ${schema}.join_requests
+				 WHERE status = 'pending'
+				 ORDER BY created_at DESC`
+			);
+			return sendJson(
+				res,
+				200,
+				result.rows.map((row) => ({
+					id: row.id,
+					status: row.status,
+					characterName: row.character_name,
+					walletAddress: row.wallet_address,
+					note: row.note,
+					createdAt: row.created_at
+				}))
+			);
+		}
+
+		if (url.pathname.startsWith("/join-requests/")) {
+			const [, , requestId, action] = url.pathname.split("/");
+			if (!requestId || (action !== "approve" && action !== "deny")) return notFound(res);
+			if (req.method !== "POST") return methodNotAllowed(res);
+			if (!(await requireAccess(req, res, "manage_members"))) return;
+
+			await ensureJoinRequestsTable(pool);
+			await ensureMemberUserColumn(pool);
+
+			const client = await pool.connect();
+			try {
+				await client.query("BEGIN");
+				const requestResult = await client.query(
+					`SELECT id,
+					        user_id,
+					        character_name,
+					        wallet_address,
+					        note
+					 FROM ${schema}.join_requests
+					 WHERE id = $1 AND status = 'pending'
+					 FOR UPDATE`,
+					[requestId]
+				);
+
+				if (requestResult.rowCount === 0) {
+					await client.query("ROLLBACK");
+					return notFound(res);
+				}
+
+				const request = requestResult.rows[0];
+				const nextStatus = action === "approve" ? "approved" : "denied";
+				await client.query(
+					`UPDATE ${schema}.join_requests
+					 SET status = $1, updated_at = now()
+					 WHERE id = $2`,
+					[nextStatus, requestId]
+				);
+
+				if (action === "approve") {
+					const memberResult = await client.query(
+						`INSERT INTO ${schema}.members
+						 (display_name, status, wallet_address, user_id, created_at, updated_at)
+						 VALUES ($1, 'active', $2, $3, now(), now())
+						 RETURNING id, display_name, status, wallet_address`,
+						[request.character_name, request.wallet_address, request.user_id]
+					);
+
+					const roleResult = await client.query(
+						`INSERT INTO ${schema}.roles
+						 (name, created_at, updated_at)
+						 VALUES ('Member', now(), now())
+						 ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+						 RETURNING id`
+					);
+					const roleId = roleResult.rows[0]?.id;
+					if (roleId) {
+						await client.query(
+							`INSERT INTO ${schema}.member_roles (member_id, role_id, created_at)
+							 VALUES ($1, $2, now())
+							 ON CONFLICT DO NOTHING`,
+							[memberResult.rows[0].id, roleId]
+						);
+					}
+				}
+
+				await client.query("COMMIT");
+				return sendJson(res, 200, {
+					id: requestId,
+					status: action === "approve" ? "approved" : "denied",
+					characterName: request.character_name,
+					walletAddress: request.wallet_address,
+					note: request.note,
+					createdAt: null
+				});
+			} catch (error) {
+				await client.query("ROLLBACK");
+				throw error;
+			} finally {
+				client.release();
+			}
+		}
 
 		if (url.pathname === "/visibility") {
 			if (req.method === "GET") {

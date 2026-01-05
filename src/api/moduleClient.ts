@@ -49,6 +49,12 @@ export async function moduleFetch<T>(
 	const url = resolveModuleUrl(path);
 	const roleHeader =
 		typeof window !== "undefined" ? window.localStorage.getItem("moduleRole") ?? "" : "";
+	const userId =
+		typeof window !== "undefined" ? window.localStorage.getItem("moduleUserId") ?? "" : "";
+	const userHandle =
+		typeof window !== "undefined" ? window.localStorage.getItem("moduleUserHandle") ?? "" : "";
+	const userAvatar =
+		typeof window !== "undefined" ? window.localStorage.getItem("moduleUserAvatar") ?? "" : "";
 
 	const res = await fetch(url, {
 		method: opts?.method ?? "GET",
@@ -56,6 +62,9 @@ export async function moduleFetch<T>(
 		headers: {
 			"X-Module-Auth": "true",
 			"X-Module-Role": roleHeader,
+			...(userId ? { "X-Module-User-Id": userId } : {}),
+			...(userHandle ? { "X-Module-User-Handle": userHandle } : {}),
+			...(userAvatar ? { "X-Module-User-Avatar": userAvatar } : {}),
 			...(opts?.body != null ? { "Content-Type": "application/json" } : {}),
 			...(opts?.headers ?? {})
 		},

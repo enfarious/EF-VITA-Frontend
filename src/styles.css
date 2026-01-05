@@ -101,6 +101,9 @@ code {
 .table.table-3 .table-row {
 	grid-template-columns: 1.2fr 1.6fr 0.8fr;
 }
+.table.table-4 .table-row {
+	grid-template-columns: 1.2fr 1.1fr 1.8fr 0.8fr;
+}
 
 .table-row[draggable="true"] {
 	border: 1px dashed rgba(255, 255, 255, 0.1);

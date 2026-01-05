@@ -2,6 +2,13 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { createMember, deleteMember, listMembers, updateMember, type CreateMemberInput } from "@/api/members";
+import {
+	approveJoinRequest,
+	denyJoinRequest,
+	getModuleSession,
+	listJoinRequests,
+	submitJoinRequest
+} from "@/api/moduleSession";
 import { ErrorView } from "@/components/ErrorView";
 import { Loading } from "@/components/Loading";
 import {
@@ -26,23 +33,18 @@ import {
 	updateRoleRanks
 } from "@/api/roles";
 import { listVisibility, updateVisibility } from "@/api/visibility";
+import { env } from "@/env";
 
 export const Route = createFileRoute("/")({
 	component: Home
 });
 
-type Persona = {
-	label: string;
-	role: "tribe-chief" | "tribe-elder" | "tribe-member";
-};
-
 type MemberSection = "overview" | "members" | "roles" | "access";
-
-const personas: Persona[] = [
-	{ label: "Tribe Chief", role: "tribe-chief" },
-	{ label: "Tribe Elder", role: "tribe-elder" },
-	{ label: "Tribe Member", role: "tribe-member" }
-];
+type JoinDraft = {
+	characterName: string;
+	walletAddress: string;
+	note: string;
+};
 
 const memberDefaults: CreateMemberInput = {
 	displayName: "",
@@ -54,7 +56,6 @@ const memberDefaults: CreateMemberInput = {
 };
 
 function Home() {
-	const [active, setActive] = useState<Persona | null>(null);
 	const [memberSection, setMemberSection] = useState<MemberSection>("overview");
 	const [memberDraft, setMemberDraft] = useState<CreateMemberInput>(memberDefaults);
 	const [memberError, setMemberError] = useState<string | null>(null);
@@ -116,48 +117,64 @@ function Home() {
 	const [rankOrder, setRankOrder] = useState<string[]>([]);
 	const [roleRankOrder, setRoleRankOrder] = useState<string[]>([]);
 	const [copyRoleId, setCopyRoleId] = useState<string>("");
+	const [joinDraft, setJoinDraft] = useState<JoinDraft>({
+		characterName: "",
+		walletAddress: "",
+		note: ""
+	});
+	const [joinError, setJoinError] = useState<string | null>(null);
 	const queryClient = useQueryClient();
+
+	const sessionQuery = useQuery({
+		queryKey: ["module-session"],
+		queryFn: getModuleSession
+	});
+
+	const session = sessionQuery.data;
+	const member = session?.member ?? null;
+	const memberRoles = member?.roles ?? [];
+	const isAuthenticated = Boolean(session?.authenticated);
 
 	const membersQuery = useQuery({
 		queryKey: ["module-members"],
 		queryFn: listMembers,
-		enabled: Boolean(active)
+		enabled: Boolean(member)
 	});
 
 	const rolesQuery = useQuery({
 		queryKey: ["module-roles"],
 		queryFn: listRoles,
-		enabled: Boolean(active)
+		enabled: Boolean(member)
 	});
 
 	const accessListsQuery = useQuery({
 		queryKey: ["module-access-lists"],
 		queryFn: listAccessLists,
-		enabled: Boolean(active)
+		enabled: Boolean(member)
 	});
 
 	const ranksQuery = useQuery({
 		queryKey: ["module-ranks"],
 		queryFn: listRanks,
-		enabled: Boolean(active)
+		enabled: Boolean(member)
 	});
 
 	const roleRanksQuery = useQuery({
 		queryKey: ["module-role-ranks"],
 		queryFn: listRoleRanks,
-		enabled: Boolean(active)
+		enabled: Boolean(member)
 	});
 
 	const roleRankOverridesQuery = useQuery({
 		queryKey: ["module-role-rank-overrides"],
 		queryFn: listRoleRankOverrides,
-		enabled: Boolean(active)
+		enabled: Boolean(member)
 	});
 
 	const visibilityQuery = useQuery({
 		queryKey: ["module-visibility"],
 		queryFn: listVisibility,
-		enabled: Boolean(active)
+		enabled: Boolean(member)
 	});
 
 	const createMemberMutation = useMutation({
@@ -185,6 +202,18 @@ function Home() {
 		},
 		onError: (err) => {
 			setMemberError(err instanceof Error ? err.message : "Failed to update member.");
+		}
+	});
+
+	const joinMutation = useMutation({
+		mutationFn: submitJoinRequest,
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["module-session"] });
+			setJoinDraft({ characterName: "", walletAddress: "", note: "" });
+			setJoinError(null);
+		},
+		onError: (err) => {
+			setJoinError(err instanceof Error ? err.message : "Failed to submit join request.");
 		}
 	});
 
@@ -403,20 +432,15 @@ function Home() {
 	});
 
 	const summary = useMemo(() => {
-		if (!active) return null;
-		if (active.role === "tribe-chief") {
+		if (!member) return null;
+		if (memberRoles.includes("Chief")) {
 			return "Highest in-tribe authority: manage members and roles.";
 		}
-		if (active.role === "tribe-elder") {
+		if (memberRoles.includes("Elder")) {
 			return "Senior role with limited management access based on tier.";
 		}
 		return "Member-level access: view tribe info and roster.";
-	}, [active]);
-
-	const enterMemberPortal = (persona: Persona) => {
-		setActive(persona);
-		setMemberSection("overview");
-	};
+	}, [member, memberRoles]);
 
 	const updateMemberDraft = (next: Partial<CreateMemberInput>) => {
 		setMemberDraft((prev) => ({ ...prev, ...next }));
@@ -435,29 +459,59 @@ function Home() {
 		return list.roles;
 	};
 
-	const activeRoleName =
-		active?.role === "tribe-chief"
+	const preferredRole =
+		memberRoles.includes("Chief")
 			? "Chief"
-			: active?.role === "tribe-elder"
+			: memberRoles.includes("Elder")
 				? "Elder"
-				: active?.role === "tribe-member"
-					? "Member"
-					: null;
+				: memberRoles[0] ?? "";
 
-	const canManageMembers = Boolean(activeRoleName && accessFor("manage_members").includes(activeRoleName));
-	const canManageRoles = Boolean(activeRoleName && accessFor("manage_roles").includes(activeRoleName));
-	const canManageAccessLists = Boolean(
-		activeRoleName && accessFor("manage_access_lists").includes(activeRoleName)
+	const canManageMembers = memberRoles.some((role) => accessFor("manage_members").includes(role));
+	const canManageRoles = memberRoles.some((role) => accessFor("manage_roles").includes(role));
+	const canManageAccessLists = memberRoles.some((role) =>
+		accessFor("manage_access_lists").includes(role)
 	);
+
+	const joinRequestsQuery = useQuery({
+		queryKey: ["module-join-requests"],
+		queryFn: listJoinRequests,
+		enabled: Boolean(isAuthenticated && canManageMembers)
+	});
+
+	const approveJoinMutation = useMutation({
+		mutationFn: approveJoinRequest,
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["module-join-requests"] });
+			queryClient.invalidateQueries({ queryKey: ["module-members"] });
+			queryClient.invalidateQueries({ queryKey: ["module-session"] });
+		}
+	});
+
+	const denyJoinMutation = useMutation({
+		mutationFn: denyJoinRequest,
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["module-join-requests"] });
+			queryClient.invalidateQueries({ queryKey: ["module-session"] });
+		}
+	});
 
 	useEffect(() => {
 		if (typeof window === "undefined") return;
-		if (!activeRoleName) {
-			window.localStorage.removeItem("moduleRole");
-			return;
+		if (!preferredRole) return;
+		window.localStorage.setItem("moduleRole", preferredRole);
+	}, [preferredRole]);
+
+	useEffect(() => {
+		if (typeof window === "undefined") return;
+		if (!session?.user) return;
+		window.localStorage.setItem("moduleUserId", session.user.id);
+		window.localStorage.setItem("moduleUserHandle", session.user.handle);
+		if (session.user.avatarUrl) {
+			window.localStorage.setItem("moduleUserAvatar", session.user.avatarUrl);
+		} else {
+			window.localStorage.removeItem("moduleUserAvatar");
 		}
-		window.localStorage.setItem("moduleRole", activeRoleName);
-	}, [activeRoleName]);
+	}, [session?.user]);
 
 
 	const updateRoleDraft = (
@@ -777,58 +831,70 @@ function Home() {
 		: rolesQuery.data ?? [];
 	const filteredRoleIds = new Set(filteredRoles.map((role) => role.id));
 	const orderedFilteredRoles = orderedRoles.filter((role) => filteredRoleIds.has(role.id));
+	const spineAuthUrl =
+		env.spineAuthUrl ||
+		(env.apiBaseUrl ? env.apiBaseUrl.replace(/\/api\/?$/, "") + "/auth/discord" : "");
+	const showDevSession =
+		typeof window !== "undefined" &&
+		(window.location.hostname === "localhost" ||
+			window.location.hostname === "127.0.0.1" ||
+			env.moduleApiBaseUrl.includes("localhost") ||
+			env.moduleApiBaseUrl.includes("127.0.0.1"));
 
 	return (
 		<div className="card">
 			<h2 style={{ marginTop: 0 }}>VITA Single-Tribe Frontend</h2>
 			<p className="small">Minimal UI that proves the API contract for a single tenant.</p>
 
-			{active ? (
+			{member ? (
 				<div className="stack">
 					<div className="card subtle">
-						<div className="row" style={{ justifyContent: "space-between" }}>
+						<div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
 							<div>
-								<div style={{ fontWeight: 700 }}>{active.label}</div>
-								<div className="small">{summary}</div>
+								<div style={{ fontWeight: 700 }}>{member.displayName}</div>
+								{summary ? <div className="small">{summary}</div> : null}
+								{session?.user ? (
+									<div className="small">Discord: {session.user.handle}</div>
+								) : null}
 							</div>
-							<button type="button" onClick={() => setActive(null)}>
-								Back
-							</button>
+							<div className="small">
+								{member.roles.length ? member.roles.join(", ") : "No roles assigned"}
+							</div>
 						</div>
 					</div>
 					<div className="stack">
-							<div className="pill-nav">
-								<button
-									type="button"
-									className={memberSection === "overview" ? "active" : ""}
-									onClick={() => setMemberSection("overview")}
-								>
-									Overview
-								</button>
-								<button
-									type="button"
-									className={memberSection === "members" ? "active" : ""}
-									onClick={() => setMemberSection("members")}
-								>
-									Members
-								</button>
-								<button
-									type="button"
-									className={memberSection === "roles" ? "active" : ""}
-									onClick={() => setMemberSection("roles")}
-								>
-									Roles
-								</button>
-								<button
-									type="button"
-									className={memberSection === "access" ? "active" : ""}
-									onClick={() => setMemberSection("access")}
-								>
-									Access
-								</button>
-							</div>
+						<div className="pill-nav">
+							<button
+								type="button"
+								className={memberSection === "overview" ? "active" : ""}
+								onClick={() => setMemberSection("overview")}
+							>
+								Overview
+							</button>
+							<button
+								type="button"
+								className={memberSection === "members" ? "active" : ""}
+								onClick={() => setMemberSection("members")}
+							>
+								Members
+							</button>
+							<button
+								type="button"
+								className={memberSection === "roles" ? "active" : ""}
+								onClick={() => setMemberSection("roles")}
+							>
+								Roles
+							</button>
+							<button
+								type="button"
+								className={memberSection === "access" ? "active" : ""}
+								onClick={() => setMemberSection("access")}
+							>
+								Access
+							</button>
+						</div>
 
-							{memberSection === "overview" ? (
+						{memberSection === "overview" ? (
 								<div className="grid">
 									<div className="card">
 										<div style={{ fontWeight: 700, marginBottom: 6 }}>Tribe snapshot</div>
@@ -890,6 +956,53 @@ function Home() {
 
 							{memberSection === "members" ? (
 								<div className="card">
+									{canManageMembers ? (
+										<div className="card subtle" style={{ marginBottom: 16 }}>
+											<div style={{ fontWeight: 700, marginBottom: 6 }}>Pending join requests</div>
+											{joinRequestsQuery.isLoading ? <Loading /> : null}
+											{joinRequestsQuery.isError ? (
+												<ErrorView
+													title="Failed to load join requests"
+													error={joinRequestsQuery.error}
+												/>
+											) : null}
+											{joinRequestsQuery.data?.length ? (
+												<div className="table table-4">
+													<div className="table-row table-header">
+														<span>Character</span>
+														<span>Wallet</span>
+														<span>Note</span>
+														<span />
+													</div>
+													{joinRequestsQuery.data.map((request) => (
+														<div className="table-row" key={request.id}>
+															<span>{request.characterName}</span>
+															<span className="mono">{request.walletAddress ?? "-"}</span>
+															<span>{request.note ?? "-"}</span>
+															<span className="row">
+																<button
+																	type="button"
+																	onClick={() => approveJoinMutation.mutate(request.id)}
+																	disabled={approveJoinMutation.isPending}
+																>
+																	Approve
+																</button>
+																<button
+																	type="button"
+																	onClick={() => denyJoinMutation.mutate(request.id)}
+																	disabled={denyJoinMutation.isPending}
+																>
+																	Deny
+																</button>
+															</span>
+														</div>
+													))}
+												</div>
+											) : (
+												<span className="small">No pending join requests.</span>
+											)}
+										</div>
+									) : null}
 									<div className="row" style={{ justifyContent: "space-between" }}>
 										<div style={{ fontWeight: 700 }}>Member list</div>
 										<span className="small">Source: module DB</span>
@@ -2021,25 +2134,152 @@ function Home() {
 								</div>
 							) : null}
 						</div>
-					)}
 				</div>
 			) : (
 				<div className="stack">
 					<div className="card subtle">
-						<div style={{ fontWeight: 700, marginBottom: 6 }}>Enter the tribe UI</div>
-						<div className="small">Select a role to preview available access.</div>
-						<div className="row" style={{ flexWrap: "wrap" }}>
-							{personas.map((persona) => (
+						<div style={{ fontWeight: 700, marginBottom: 6 }}>Member login</div>
+						<div className="small">Authenticate with Discord to access your tribe.</div>
+						{sessionQuery.isLoading ? <Loading /> : null}
+						{sessionQuery.isError ? (
+							<ErrorView title="Failed to load session" error={sessionQuery.error} />
+						) : null}
+						{spineAuthUrl ? (
+							<button
+								type="button"
+								onClick={() => {
+									window.location.href = spineAuthUrl;
+								}}
+							>
+								Sign in with Discord
+							</button>
+						) : (
+							<span className="small">Spine auth URL is not configured.</span>
+						)}
+					</div>
+					{isAuthenticated ? (
+						<div className="card">
+							<div style={{ fontWeight: 700, marginBottom: 6 }}>Join this tribe</div>
+							{session?.joinRequest?.status === "pending" ? (
+								<div className="stack">
+									<span className="small">
+										Your join request is pending review by a chief.
+									</span>
+									<div className="kv">
+										<span>Character</span>
+										<span>{session.joinRequest.characterName}</span>
+										<span>Wallet</span>
+										<span className="mono">
+											{session.joinRequest.walletAddress ?? "-"}
+										</span>
+										<span>Note</span>
+										<span>{session.joinRequest.note ?? "-"}</span>
+									</div>
+								</div>
+							) : (
+								<form
+									className="stack"
+									onSubmit={(event) => {
+										event.preventDefault();
+										setJoinError(null);
+										if (!joinDraft.characterName.trim()) {
+											setJoinError("Character name is required.");
+											return;
+										}
+										joinMutation.mutate({
+											characterName: joinDraft.characterName.trim(),
+											walletAddress: joinDraft.walletAddress.trim() || undefined,
+											note: joinDraft.note.trim() || undefined
+										});
+									}}
+								>
+									<label className="stack">
+										<span className="small">Character name</span>
+										<input
+											value={joinDraft.characterName}
+											onChange={(event) =>
+												setJoinDraft((prev) => ({
+													...prev,
+													characterName: event.target.value
+												}))
+											}
+										/>
+									</label>
+									<label className="stack">
+										<span className="small">Wallet address (fake for now)</span>
+										<input
+											value={joinDraft.walletAddress}
+											onChange={(event) =>
+												setJoinDraft((prev) => ({
+													...prev,
+													walletAddress: event.target.value
+												}))
+											}
+										/>
+									</label>
+									<label className="stack">
+										<span className="small">Note to the chiefs</span>
+										<textarea
+											rows={3}
+											value={joinDraft.note}
+											onChange={(event) =>
+												setJoinDraft((prev) => ({ ...prev, note: event.target.value }))
+											}
+										/>
+									</label>
+									<div className="row">
+										<button type="submit" disabled={joinMutation.isPending}>
+											{joinMutation.isPending ? "Submitting..." : "Request to join"}
+										</button>
+									</div>
+									{joinError ? <span className="small">{joinError}</span> : null}
+								</form>
+							)}
+						</div>
+					) : null}
+					{showDevSession ? (
+						<div className="card subtle">
+							<div style={{ fontWeight: 700, marginBottom: 6 }}>Dev session</div>
+							<div className="small">
+								Fake a Discord session for local module API testing.
+							</div>
+							<div className="row">
 								<button
 									type="button"
-									key={persona.role}
-									onClick={() => enterMemberPortal(persona)}
+									onClick={() => {
+										window.localStorage.setItem("moduleUserId", "dev-001");
+										window.localStorage.setItem("moduleUserHandle", "Dev Chief");
+										window.localStorage.setItem("moduleRole", "Chief");
+										queryClient.invalidateQueries({ queryKey: ["module-session"] });
+									}}
 								>
-									{persona.label}
+									Use Chief
 								</button>
-							))}
+								<button
+									type="button"
+									onClick={() => {
+										window.localStorage.setItem("moduleUserId", "dev-002");
+										window.localStorage.setItem("moduleUserHandle", "Dev Elder");
+										window.localStorage.setItem("moduleRole", "Elder");
+										queryClient.invalidateQueries({ queryKey: ["module-session"] });
+									}}
+								>
+									Use Elder
+								</button>
+								<button
+									type="button"
+									onClick={() => {
+										window.localStorage.setItem("moduleUserId", "dev-003");
+										window.localStorage.setItem("moduleUserHandle", "Dev Member");
+										window.localStorage.setItem("moduleRole", "Member");
+										queryClient.invalidateQueries({ queryKey: ["module-session"] });
+									}}
+								>
+									Use Member
+								</button>
+							</div>
 						</div>
-					</div>
+					) : null}
 				</div>
 			)}
 		</div>
