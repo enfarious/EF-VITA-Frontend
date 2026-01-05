@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { createMember, deleteMember, listMembers, updateMember, type CreateMemberInput } from "@/api/members";
 import { ErrorView } from "@/components/ErrorView";
 import { Loading } from "@/components/Loading";
-import { createTenant, getMe, installModule, listTenantMembers } from "@/api/spine";
 import {
 	createAccessList,
 	createRank,
@@ -27,7 +26,6 @@ import {
 	updateRoleRanks
 } from "@/api/roles";
 import { listVisibility, updateVisibility } from "@/api/visibility";
-import { env } from "@/env";
 
 export const Route = createFileRoute("/")({
 	component: Home
@@ -35,21 +33,16 @@ export const Route = createFileRoute("/")({
 
 type Persona = {
 	label: string;
-	role: "tenant-admin" | "tribe-chief" | "tribe-elder" | "tribe-member";
+	role: "tribe-chief" | "tribe-elder" | "tribe-member";
 };
 
-type TenantSection = "overview" | "frontend" | "billing";
 type MemberSection = "overview" | "members" | "roles" | "access";
 
-const adminPersona: Persona = {
-	label: "Tenant Admin",
-	role: "tenant-admin"
-};
-
-const memberPersona: Persona = {
-	label: "Tribe Member",
-	role: "tribe-member"
-};
+const personas: Persona[] = [
+	{ label: "Tribe Chief", role: "tribe-chief" },
+	{ label: "Tribe Elder", role: "tribe-elder" },
+	{ label: "Tribe Member", role: "tribe-member" }
+];
 
 const memberDefaults: CreateMemberInput = {
 	displayName: "",
@@ -62,13 +55,9 @@ const memberDefaults: CreateMemberInput = {
 
 function Home() {
 	const [active, setActive] = useState<Persona | null>(null);
-	const [tenantSection, setTenantSection] = useState<TenantSection>("overview");
 	const [memberSection, setMemberSection] = useState<MemberSection>("overview");
 	const [memberDraft, setMemberDraft] = useState<CreateMemberInput>(memberDefaults);
 	const [memberError, setMemberError] = useState<string | null>(null);
-	const [tenantDraft, setTenantDraft] = useState({ name: "V.I.T.A.", slug: "vita" });
-	const [tenantError, setTenantError] = useState<string | null>(null);
-	const [moduleError, setModuleError] = useState<string | null>(null);
 	const [memberEdit, setMemberEdit] = useState<{
 		id: string;
 		draft: CreateMemberInput;
@@ -128,58 +117,47 @@ function Home() {
 	const [roleRankOrder, setRoleRankOrder] = useState<string[]>([]);
 	const [copyRoleId, setCopyRoleId] = useState<string>("");
 	const queryClient = useQueryClient();
-	const meQuery = useQuery({
-		queryKey: ["spine-me"],
-		queryFn: getMe,
-		enabled: Boolean(env.apiBaseUrl)
-	});
-	const spineMembership = meQuery.data?.memberships?.[0] ?? null;
-	const spineMembersQuery = useQuery({
-		queryKey: ["spine-members", spineMembership?.slug ?? ""],
-		queryFn: () => listTenantMembers(spineMembership?.slug ?? ""),
-		enabled: Boolean(spineMembership?.slug)
-	});
 
 	const membersQuery = useQuery({
 		queryKey: ["module-members"],
 		queryFn: listMembers,
-		enabled: Boolean(active && active.role !== "tenant-admin")
+		enabled: Boolean(active)
 	});
 
 	const rolesQuery = useQuery({
 		queryKey: ["module-roles"],
 		queryFn: listRoles,
-		enabled: Boolean(active && active.role !== "tenant-admin")
+		enabled: Boolean(active)
 	});
 
 	const accessListsQuery = useQuery({
 		queryKey: ["module-access-lists"],
 		queryFn: listAccessLists,
-		enabled: Boolean(active && active.role !== "tenant-admin")
+		enabled: Boolean(active)
 	});
 
 	const ranksQuery = useQuery({
 		queryKey: ["module-ranks"],
 		queryFn: listRanks,
-		enabled: Boolean(active && active.role !== "tenant-admin")
+		enabled: Boolean(active)
 	});
 
 	const roleRanksQuery = useQuery({
 		queryKey: ["module-role-ranks"],
 		queryFn: listRoleRanks,
-		enabled: Boolean(active && active.role !== "tenant-admin")
+		enabled: Boolean(active)
 	});
 
 	const roleRankOverridesQuery = useQuery({
 		queryKey: ["module-role-rank-overrides"],
 		queryFn: listRoleRankOverrides,
-		enabled: Boolean(active && active.role !== "tenant-admin")
+		enabled: Boolean(active)
 	});
 
 	const visibilityQuery = useQuery({
 		queryKey: ["module-visibility"],
 		queryFn: listVisibility,
-		enabled: Boolean(active && active.role !== "tenant-admin")
+		enabled: Boolean(active)
 	});
 
 	const createMemberMutation = useMutation({
@@ -418,31 +396,6 @@ function Home() {
 		onSuccess: () => queryClient.invalidateQueries({ queryKey: ["module-access-lists"] })
 	});
 
-	const createTenantMutation = useMutation({
-		mutationFn: createTenant,
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ["spine-me"] });
-			queryClient.invalidateQueries({ queryKey: ["spine-members"] });
-			setTenantError(null);
-		},
-		onError: (err) => {
-			setTenantError(err instanceof Error ? err.message : "Failed to create tenant.");
-		}
-	});
-
-	const installModuleMutation = useMutation({
-		mutationFn: ({ slug, moduleId }: { slug: string; moduleId: string }) =>
-			installModule(slug, moduleId),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ["spine-me"] });
-			queryClient.invalidateQueries({ queryKey: ["spine-members"] });
-			setModuleError(null);
-		},
-		onError: (err) => {
-			setModuleError(err instanceof Error ? err.message : "Failed to install module.");
-		}
-	});
-
 	const updateVisibilityMutation = useMutation({
 		mutationFn: ({ area, isPublic }: { area: "members" | "roles"; isPublic: boolean }) =>
 			updateVisibility(area, isPublic),
@@ -451,9 +404,6 @@ function Home() {
 
 	const summary = useMemo(() => {
 		if (!active) return null;
-		if (active.role === "tenant-admin") {
-			return "Platform-level access: configure frontend selection, billing, and org-wide settings.";
-		}
 		if (active.role === "tribe-chief") {
 			return "Highest in-tribe authority: manage members and roles.";
 		}
@@ -463,29 +413,8 @@ function Home() {
 		return "Member-level access: view tribe info and roster.";
 	}, [active]);
 
-	const discordAuthUrl = env.apiBaseUrl
-		? new URL("/auth/discord", env.apiBaseUrl).toString()
-		: "";
-	const logoutUrl = env.apiBaseUrl ? new URL("/auth/logout", env.apiBaseUrl).toString() : "";
-
-	const goToDiscordAuth = () => {
-		if (!discordAuthUrl || typeof window === "undefined") return;
-		window.location.assign(discordAuthUrl);
-	};
-
-	const handleSpineLogout = () => {
-		if (!logoutUrl || typeof window === "undefined") return;
-		window.location.assign(logoutUrl);
-	};
-
-	const enterAdminPortal = () => {
-		if (!meQuery.data) return;
-		setActive(adminPersona);
-		setTenantSection("overview");
-	};
-
-	const enterMemberPortal = () => {
-		setActive(memberPersona);
+	const enterMemberPortal = (persona: Persona) => {
+		setActive(persona);
 		setMemberSection("overview");
 	};
 
@@ -530,15 +459,6 @@ function Home() {
 		window.localStorage.setItem("moduleRole", activeRoleName);
 	}, [activeRoleName]);
 
-	useEffect(() => {
-		if (typeof window === "undefined") return;
-		const slug = meQuery.data?.memberships?.[0]?.slug ?? "";
-		if (!slug) {
-			window.localStorage.removeItem("activeTenantSlug");
-			return;
-		}
-		window.localStorage.setItem("activeTenantSlug", slug);
-	}, [meQuery.data]);
 
 	const updateRoleDraft = (
 		next: Partial<{ id?: string; name: string; description: string; sortOrder: number }>
@@ -806,38 +726,7 @@ function Home() {
 		}
 	};
 
-	const handleCreateTenant = (event: FormEvent<HTMLFormElement>) => {
-		event.preventDefault();
-		if (!tenantDraft.name.trim() || !tenantDraft.slug.trim()) {
-			setTenantError("Tenant name and slug are required.");
-			return;
-		}
-		createTenantMutation.mutate({
-			name: tenantDraft.name.trim(),
-			slug: tenantDraft.slug.trim()
-		});
-	};
-
-	const handleInstallModule = () => {
-		const slug = spineMembership?.slug || tenantDraft.slug.trim();
-		if (!slug) {
-			setModuleError("Add a tenant slug to install modules.");
-			return;
-		}
-		installModuleMutation.mutate({ slug, moduleId: "basic_tribe_ui" });
-	};
-
-	const activeMembers = spineMembership?.slug
-		? (spineMembersQuery.data?.members ?? []).map((member) => ({
-				id: String(member.id),
-				displayName: member.display_name,
-				status: "active" as const,
-				walletAddress: null,
-				roles: member.role ? [member.role] : [],
-				globalRank: null,
-				roleRanks: []
-			}))
-		: membersQuery.data ?? [];
+	const activeMembers = membersQuery.data ?? [];
 	const filteredMembers = activeMembers.filter((member) => {
 		const query = memberSearch.trim().toLowerCase();
 		if (!query) return true;
@@ -881,7 +770,6 @@ function Home() {
 	const isUsingGlobalRanks = selectedRoleId
 		? (roleRanksQuery.data ?? []).filter((row) => row.roleId === selectedRoleId).length === 0
 		: true;
-	const usingSpineMembers = Boolean(spineMembership?.slug);
 	const orderedRoles = roleOrder.length
 		? roleOrder
 				.map((id) => (rolesQuery.data ?? []).find((role) => role.id === id))
@@ -903,203 +791,12 @@ function Home() {
 								<div style={{ fontWeight: 700 }}>{active.label}</div>
 								<div className="small">{summary}</div>
 							</div>
-							<div className="row">
-								{meQuery.data ? (
-									<button type="button" onClick={handleSpineLogout}>
-										Sign out of spine
-									</button>
-								) : null}
-								<button type="button" onClick={() => setActive(null)}>
-									Back
-								</button>
-							</div>
+							<button type="button" onClick={() => setActive(null)}>
+								Back
+							</button>
 						</div>
 					</div>
-					<div className="card subtle">
-						<div style={{ fontWeight: 700, marginBottom: 6 }}>Spine session</div>
-						{!env.apiBaseUrl ? (
-							<div className="small">VITE_API_BASE_URL is not set.</div>
-						) : meQuery.isLoading ? (
-							<Loading />
-						) : meQuery.isError ? (
-							<ErrorView title="Failed to load spine session" error={meQuery.error} />
-						) : meQuery.data ? (
-							<div className="kv">
-								<span>User</span>
-								<span>{meQuery.data.display_name || meQuery.data.email}</span>
-								<span>Tenant</span>
-								<span>{spineMembership?.slug ?? "None"}</span>
-								<span>Role</span>
-								<span>{spineMembership?.role ?? "None"}</span>
-							</div>
-						) : (
-							<div className="small">Not authenticated yet.</div>
-						)}
-					</div>
-
-					{active.role === "tenant-admin" ? (
-						<div className="stack">
-							<div className="pill-nav">
-								<button
-									type="button"
-									className={tenantSection === "overview" ? "active" : ""}
-									onClick={() => setTenantSection("overview")}
-								>
-									Tenant overview
-								</button>
-								<button
-									type="button"
-									className={tenantSection === "frontend" ? "active" : ""}
-									onClick={() => setTenantSection("frontend")}
-								>
-									Frontend
-								</button>
-								<button
-									type="button"
-									className={tenantSection === "billing" ? "active" : ""}
-									onClick={() => setTenantSection("billing")}
-								>
-									Billing
-								</button>
-							</div>
-
-							{tenantSection === "overview" ? (
-								<div className="grid">
-									<div className="card">
-										<div style={{ fontWeight: 700, marginBottom: 6 }}>Tribe identity</div>
-										<div className="small">Display name, short code, and chain namespace.</div>
-										<div className="kv">
-											<span>Tribe name</span>
-											<span>VITA Example</span>
-											<span>Tenant ID</span>
-											<span>vita-core-01</span>
-											<span>Region</span>
-											<span>Primary</span>
-										</div>
-									</div>
-									<div className="card">
-										<div style={{ fontWeight: 700, marginBottom: 6 }}>Contact</div>
-										<div className="small">Primary point of contact for spine alerts.</div>
-										<div className="kv">
-											<span>Owner</span>
-											<span>tenant-admin</span>
-											<span>Email</span>
-											<span>admin@tribe.local</span>
-											<span>Webhook</span>
-											<span>Disabled</span>
-										</div>
-									</div>
-									<div className="card">
-										<div style={{ fontWeight: 700, marginBottom: 6 }}>Create tenant</div>
-										<div className="small">Helper for new tribes using the default UI.</div>
-										<form className="stack" onSubmit={handleCreateTenant}>
-											<label className="stack">
-												<span className="small">Display name</span>
-												<input
-													value={tenantDraft.name}
-													onChange={(event) =>
-														setTenantDraft((prev) => ({
-															...prev,
-															name: event.target.value
-														}))
-													}
-												/>
-											</label>
-											<label className="stack">
-												<span className="small">Slug (URL-safe)</span>
-												<input
-													value={tenantDraft.slug}
-													onChange={(event) =>
-														setTenantDraft((prev) => ({
-															...prev,
-															slug: event.target.value
-														}))
-													}
-													placeholder="vita-prime"
-												/>
-											</label>
-											<div className="row">
-												<button type="submit" disabled={createTenantMutation.isPending}>
-													{createTenantMutation.isPending ? "Creating..." : "Create tenant"}
-												</button>
-												{tenantError ? <span className="small">{tenantError}</span> : null}
-											</div>
-										</form>
-										<div className="small">
-											Example: use display name "V.I.T.A." with slug "vita" for a clean URL.
-										</div>
-									</div>
-									<div className="card">
-										<div style={{ fontWeight: 700, marginBottom: 6 }}>Security</div>
-										<div className="small">Wallet authentication will land here (Sui).</div>
-										<div className="row">
-											<button type="button">Rotate admin key</button>
-											<button type="button">View audit log</button>
-										</div>
-									</div>
-								</div>
-							) : null}
-
-							{tenantSection === "frontend" ? (
-								<div className="grid">
-									<div className="card">
-										<div style={{ fontWeight: 700, marginBottom: 6 }}>Default frontend</div>
-										<div className="small">Currently using the EF-VITA minimal UI.</div>
-										<div className="row">
-											<button type="button">Keep default</button>
-											<button type="button">Upload custom</button>
-										</div>
-									</div>
-									<div className="card">
-										<div style={{ fontWeight: 700, marginBottom: 6 }}>Module install</div>
-										<div className="small">Install the default tribe module on the spine.</div>
-										<div className="row">
-											<button
-												type="button"
-												onClick={handleInstallModule}
-												disabled={installModuleMutation.isPending}
-											>
-												{installModuleMutation.isPending ? "Installing..." : "Install Basic Tribe UI"}
-											</button>
-											{moduleError ? <span className="small">{moduleError}</span> : null}
-										</div>
-										<div className="small">
-											Targets: /t/
-											{spineMembership?.slug || tenantDraft.slug.trim() || "your-tribe"}
-											/modules/basic_tribe_ui/install
-										</div>
-									</div>
-									<div className="card">
-										<div style={{ fontWeight: 700, marginBottom: 6 }}>Routing</div>
-										<div className="small">Map a vanity domain when you are ready.</div>
-										<div className="row">
-											<button type="button">Set domain</button>
-											<button type="button">Verify</button>
-										</div>
-									</div>
-								</div>
-							) : null}
-
-							{tenantSection === "billing" ? (
-								<div className="grid">
-									<div className="card">
-										<div style={{ fontWeight: 700, marginBottom: 6 }}>Plan</div>
-										<div className="small">Starter (single-tribe)</div>
-										<div className="row">
-											<button type="button">Upgrade</button>
-											<button type="button">View invoices</button>
-										</div>
-									</div>
-									<div className="card">
-										<div style={{ fontWeight: 700, marginBottom: 6 }}>Payment method</div>
-										<div className="small">Sui wallet only (no off-chain cards).</div>
-										<button type="button">Connect Sui wallet</button>
-									</div>
-								</div>
-							) : null}
-						</div>
-					) : (
-						<div className="stack">
+					<div className="stack">
 							<div className="pill-nav">
 								<button
 									type="button"
@@ -1208,8 +905,7 @@ function Home() {
 									</label>
 
 									{canManageMembers ? (
-										!usingSpineMembers ? (
-											<form className="stack" onSubmit={handleAddMember}>
+										<form className="stack" onSubmit={handleAddMember}>
 											<div className="grid">
 												<label className="stack">
 													<span className="small">Display name</span>
@@ -1367,17 +1063,10 @@ function Home() {
 												{memberError ? <span className="small">{memberError}</span> : null}
 											</div>
 										</form>
-										) : (
-											<div className="small">Member management happens in the spine.</div>
-										)
 									) : null}
 
-									{usingSpineMembers ? (spineMembersQuery.isLoading ? <Loading /> : null) : null}
-									{!usingSpineMembers ? (membersQuery.isLoading ? <Loading /> : null) : null}
-									{usingSpineMembers && spineMembersQuery.isError ? (
-										<ErrorView title="Failed to load members" error={spineMembersQuery.error} />
-									) : null}
-									{!usingSpineMembers && membersQuery.isError ? (
+									{membersQuery.isLoading ? <Loading /> : null}
+									{membersQuery.isError ? (
 										<ErrorView title="Failed to load members" error={membersQuery.error} />
 									) : null}
 
@@ -1414,47 +1103,45 @@ function Home() {
 													</span>
 													<span className="mono">{member.walletAddress ?? "-"}</span>
 													<span>
-														{!usingSpineMembers ? (
-															<div className="row">
+														<div className="row">
+															<button
+																type="button"
+																onClick={() =>
+																	setMemberEdit({
+																		id: member.id,
+																		draft: {
+																			displayName: member.displayName,
+																			status: member.status,
+																			walletAddress: member.walletAddress ?? "",
+																			roles: member.roles,
+																			globalRankId: member.globalRank?.id ?? "",
+																			roleRanks: (member.roleRanks ?? []).map((entry) => ({
+																				role: entry.role,
+																				rankId: entry.rankId
+																			}))
+																		},
+																		readonly: !canManageMembers
+																	})
+																}
+															>
+																{canManageMembers ? "Edit" : "View"}
+															</button>
+															{canManageMembers ? (
 																<button
 																	type="button"
-																	onClick={() =>
-																		setMemberEdit({
-																			id: member.id,
-																			draft: {
-																				displayName: member.displayName,
-																				status: member.status,
-																				walletAddress: member.walletAddress ?? "",
-																				roles: member.roles,
-																				globalRankId: member.globalRank?.id ?? "",
-																				roleRanks: (member.roleRanks ?? []).map((entry) => ({
-																					role: entry.role,
-																					rankId: entry.rankId
-																				}))
-																			},
-																			readonly: !canManageMembers
-																		})
-																	}
+																	onClick={() => deleteMemberMutation.mutate(member.id)}
+																	disabled={deleteMemberMutation.isPending}
 																>
-																	{canManageMembers ? "Edit" : "View"}
+																	Remove
 																</button>
-																{canManageMembers ? (
-																	<button
-																		type="button"
-																		onClick={() => deleteMemberMutation.mutate(member.id)}
-																		disabled={deleteMemberMutation.isPending}
-																	>
-																		Remove
-																	</button>
-																) : null}
-															</div>
-														) : null}
+															) : null}
+														</div>
 													</span>
 												</div>
 											))}
 										</div>
 									) : null}
-									{memberEdit && !usingSpineMembers ? (
+									{memberEdit ? (
 										<div className="card subtle">
 											<div style={{ fontWeight: 700, marginBottom: 6 }}>
 												{memberEdit.readonly ? "Member profile" : "Edit member"}
@@ -2059,7 +1746,10 @@ function Home() {
 														</div>
 														{rankOrder
 															.map((id) => ranksQuery.data.find((rank) => rank.id === id))
-															.filter(Boolean)
+															.filter(
+																(rank): rank is NonNullable<typeof ranksQuery.data>[number] =>
+																	Boolean(rank)
+															)
 															.map((rank) => (
 															<div
 																className="table-row"
@@ -2336,33 +2026,18 @@ function Home() {
 			) : (
 				<div className="stack">
 					<div className="card subtle">
-						<div style={{ fontWeight: 700, marginBottom: 6 }}>Admin login</div>
-						<div className="small">Discord OAuth only for spine-level access.</div>
-						{!env.apiBaseUrl ? (
-							<div className="small">Set `VITE_API_BASE_URL` to enable login.</div>
-						) : meQuery.isLoading ? (
-							<Loading />
-						) : meQuery.data ? (
-							<div className="row">
-								<button type="button" onClick={enterAdminPortal}>
-									Enter admin portal
+						<div style={{ fontWeight: 700, marginBottom: 6 }}>Enter the tribe UI</div>
+						<div className="small">Select a role to preview available access.</div>
+						<div className="row" style={{ flexWrap: "wrap" }}>
+							{personas.map((persona) => (
+								<button
+									type="button"
+									key={persona.role}
+									onClick={() => enterMemberPortal(persona)}
+								>
+									{persona.label}
 								</button>
-							</div>
-						) : (
-							<div className="row">
-								<button type="button" onClick={goToDiscordAuth}>
-									Sign in with Discord
-								</button>
-							</div>
-						)}
-					</div>
-					<div className="card subtle">
-						<div style={{ fontWeight: 700, marginBottom: 6 }}>Member portal</div>
-						<div className="small">Member auth hooks in next. For now, browse as a guest.</div>
-						<div className="row">
-							<button type="button" onClick={enterMemberPortal}>
-								Enter member portal
-							</button>
+							))}
 						</div>
 					</div>
 				</div>

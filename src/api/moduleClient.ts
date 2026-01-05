@@ -2,6 +2,14 @@ import { env } from "@/env";
 
 type HttpMethod = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
 
+function inferTenantSlug() {
+	if (typeof window === "undefined") return "";
+	const cached = window.localStorage.getItem("activeTenantSlug") ?? "";
+	if (cached) return cached;
+	const match = window.location.pathname.match(/\/t\/([^/]+)\/m\//);
+	return match?.[1] ?? "";
+}
+
 function resolveModuleUrl(path: string) {
 	const moduleId = "basic_tribe_ui";
 	const overrideBase = env.moduleApiBaseUrl;
@@ -15,18 +23,18 @@ function resolveModuleUrl(path: string) {
 		return `${normalizedBase}${normalizedPath}`;
 	}
 
-	if (!env.apiBaseUrl) {
-		throw new Error("VITE_API_BASE_URL is not set. Check your .env.");
+	const origin = typeof window !== "undefined" ? window.location.origin : env.apiBaseUrl;
+	if (!origin) {
+		throw new Error("Module base URL could not be resolved.");
 	}
 
-	const slug =
-		typeof window !== "undefined" ? window.localStorage.getItem("activeTenantSlug") ?? "" : "";
+	const slug = inferTenantSlug();
 	if (!slug) {
 		throw new Error("Active tenant slug is not available.");
 	}
 
-	const apiBase = env.apiBaseUrl.endsWith("/") ? env.apiBaseUrl.slice(0, -1) : env.apiBaseUrl;
-	return `${apiBase}/t/${encodeURIComponent(slug)}/m/${moduleId}${normalizedPath}`;
+	const base = origin.endsWith("/") ? origin.slice(0, -1) : origin;
+	return `${base}/t/${encodeURIComponent(slug)}/m/${moduleId}${normalizedPath}`;
 }
 
 export async function moduleFetch<T>(
