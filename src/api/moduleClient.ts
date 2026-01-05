@@ -15,6 +15,17 @@ function resolveModuleUrl(path: string) {
 	const overrideBase = env.moduleApiBaseUrl;
 	const normalizedPath = path.startsWith("/") ? path : `/${path}`;
 
+	const baseMatch =
+		typeof window !== "undefined"
+			? window.location.pathname.match(/^(\/t\/[^/]+\/m\/[^/]+)/)
+			: null;
+
+	if (baseMatch) {
+		const origin = window.location.origin;
+		const base = origin.endsWith("/") ? origin.slice(0, -1) : origin;
+		return `${base}${baseMatch[1]}${normalizedPath}`;
+	}
+
 	if (overrideBase) {
 		if (overrideBase.startsWith("http://") || overrideBase.startsWith("https://")) {
 			return new URL(path, overrideBase).toString();
