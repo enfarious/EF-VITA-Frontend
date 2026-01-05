@@ -831,9 +831,8 @@ function Home() {
 		: rolesQuery.data ?? [];
 	const filteredRoleIds = new Set(filteredRoles.map((role) => role.id));
 	const orderedFilteredRoles = orderedRoles.filter((role) => filteredRoleIds.has(role.id));
-	const spineAuthUrl =
-		env.spineAuthUrl ||
-		(env.apiBaseUrl ? env.apiBaseUrl.replace(/\/api\/?$/, "") + "/auth/discord" : "");
+	const spineLoginUrl =
+		env.apiBaseUrl ? env.apiBaseUrl.replace(/\/api\/?$/, "") + "/auth/login" : "/auth/login";
 	const showDevSession =
 		typeof window !== "undefined" &&
 		(window.location.hostname === "localhost" ||
@@ -2140,23 +2139,19 @@ function Home() {
 					{!isAuthenticated ? (
 						<div className="card subtle">
 							<div style={{ fontWeight: 700, marginBottom: 6 }}>Member login</div>
-							<div className="small">Authenticate with Discord to access your tribe.</div>
+							<div className="small">Log in on the spine to access your tribe.</div>
 							{sessionQuery.isLoading ? <Loading /> : null}
 							{sessionQuery.isError ? (
 								<ErrorView title="Failed to load session" error={sessionQuery.error} />
 							) : null}
-							{spineAuthUrl ? (
-								<button
-									type="button"
-									onClick={() => {
-										window.location.href = spineAuthUrl;
-									}}
-								>
-									Sign in with Discord
-								</button>
-							) : (
-								<span className="small">Spine auth URL is not configured.</span>
-							)}
+							<button
+								type="button"
+								onClick={() => {
+									window.location.href = spineLoginUrl;
+								}}
+							>
+								Go to spine login
+							</button>
 						</div>
 					) : null}
 					{isAuthenticated ? (
