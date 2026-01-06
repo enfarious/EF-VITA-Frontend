@@ -840,10 +840,49 @@ function Home() {
 			env.moduleApiBaseUrl.includes("localhost") ||
 			env.moduleApiBaseUrl.includes("127.0.0.1"));
 
+	const membersCount = membersQuery.data?.length ?? 0;
+	const roleCount = rolesQuery.data?.length ?? 0;
+	const pendingRequests = joinRequestsQuery.data?.length ?? 0;
+
 	return (
-		<div className="card">
-			<h2 style={{ marginTop: 0 }}>VITA Single-Tribe Frontend</h2>
-			<p className="small">Minimal UI that proves the API contract for a single tenant.</p>
+		<div className="stack">
+			<div className="hero">
+				<div className="hero-header">
+					<div>
+						<div className="eyebrow">Tribe Console</div>
+						<h1>VITA Tribe Operations</h1>
+						<div className="small">
+							Control membership, roles, and access for your tribe with a clean, fast
+							command surface.
+						</div>
+					</div>
+					<div className="hero-actions">
+						<button type="button" onClick={() => setMemberSection("members")} disabled={!member}>
+							Manage roster
+						</button>
+						<button type="button" className="secondary" onClick={() => setMemberSection("roles")} disabled={!member}>
+							Configure roles
+						</button>
+					</div>
+				</div>
+				<div className="hero-grid">
+					<div className="stat">
+						<span className="stat-label">Members</span>
+						<span className="stat-value">{membersCount}</span>
+						<span className="small">Active roster count</span>
+					</div>
+					<div className="stat">
+						<span className="stat-label">Roles</span>
+						<span className="stat-value">{roleCount}</span>
+						<span className="small">Governance tiers defined</span>
+					</div>
+					<div className="stat">
+						<span className="stat-label">Join requests</span>
+						<span className="stat-value">{pendingRequests}</span>
+						<span className="small">Pending approvals</span>
+					</div>
+				</div>
+			</div>
 
 			{member ? (
 				<div className="stack">

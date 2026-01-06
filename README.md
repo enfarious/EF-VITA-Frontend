@@ -1,4 +1,4 @@
-# EF-VITA Single-Tribe Frontend
+# EF-VITA Tribe Frontend
 
 A **minimal, ready-to-use frontend** for a single Tribe in the EF-VITA ecosystem.
 
@@ -95,3 +95,31 @@ The frontend connects to the backend using a single environment variable:
 
 ```bash
 VITE_API_BASE_URL=http://your-backend-url
+```
+
+## Local dev
+
+The Vite dev server runs on `http://localhost:3030` (configured in `vite.config.ts`).
+
+Quick env toggles:
+
+```bash
+npm run env:local
+npm run env:prod
+```
+
+## Recommended workflow
+
+- Develop against local module API + local Postgres to avoid schema churn.
+- When schema stabilizes, switch to prod spine while keeping the local module API.
+- For final verification, connect the module to the spine-hosted slot.
+
+Notes:
+- Changing `.env` requires restarting `npm run dev`.
+- Dev session buttons appear when `VITE_MODULE_API_BASE_URL` points to localhost.
+
+## Troubleshooting
+
+- Seeing stale login or roles: clear `localStorage` and refresh.
+- Switched env but nothing changed: restart the dev server after `.env` edits.
+- Auth redirects feel wrong: try an incognito window to avoid cached cookies.

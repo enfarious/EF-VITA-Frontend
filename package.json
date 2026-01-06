@@ -12,6 +12,8 @@
     "dev:api": "node scripts/dev-module-api.mjs",
     "dev:api:watch": "nodemon --watch scripts --ext mjs --exec \"node scripts/dev-module-api.mjs\"",
     "dev:all": "node scripts/dev-all.mjs",
+    "env:local": "node scripts/switch-env.mjs local",
+    "env:prod": "node scripts/switch-env.mjs prod",
     "seed:module": "node scripts/seed-module-db.mjs",
     "build": "tsc -p tsconfig.json && vite build",
     "build:module": "npm run build && node scripts/deploy-module-ui.mjs",
