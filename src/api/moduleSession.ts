@@ -24,7 +24,7 @@ export type ModuleSession = {
 };
 
 export async function getModuleSession(): Promise<ModuleSession> {
-	const data = await moduleFetch<Record<string, unknown>>("/me");
+	const data = await moduleFetch<Record<string, unknown>>("/membership");
 	const rawUser = (data.user as Record<string, unknown> | null) ?? null;
 	const rawMember = (data.member as Record<string, unknown> | null) ?? null;
 	const rawMembership = (data.membership as Record<string, unknown> | null) ?? null;
@@ -135,7 +135,7 @@ export async function submitJoinRequest(input: {
 	walletAddress?: string;
 	note?: string;
 }): Promise<JoinRequest> {
-	return moduleFetch<JoinRequest>("/join", {
+	return moduleFetch<JoinRequest>("/membership/request", {
 		method: "POST",
 		body: {
 			character_name: input.characterName,
@@ -146,7 +146,7 @@ export async function submitJoinRequest(input: {
 }
 
 export async function listJoinRequests(): Promise<JoinRequest[]> {
-	const payload = await moduleFetch<unknown>("/join-requests");
+	const payload = await moduleFetch<unknown>("/membership/requests");
 	if (Array.isArray(payload)) {
 		return payload as JoinRequest[];
 	}
@@ -160,13 +160,16 @@ export async function listJoinRequests(): Promise<JoinRequest[]> {
 }
 
 export async function approveJoinRequest(id: string): Promise<JoinRequest> {
-	return moduleFetch<JoinRequest>(`/join-requests/${encodeURIComponent(id)}/approve`, {
-		method: "POST"
-	});
+	return moduleFetch<JoinRequest>(
+		`/membership/requests/${encodeURIComponent(id)}/approve`,
+		{
+			method: "POST"
+		}
+	);
 }
 
 export async function denyJoinRequest(id: string): Promise<JoinRequest> {
-	return moduleFetch<JoinRequest>(`/join-requests/${encodeURIComponent(id)}/deny`, {
+	return moduleFetch<JoinRequest>(`/membership/requests/${encodeURIComponent(id)}/deny`, {
 		method: "POST"
 	});
 }
