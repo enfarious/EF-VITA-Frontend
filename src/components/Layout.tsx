@@ -10,9 +10,13 @@ export function Layout() {
 		<div className="container">
 			<nav className="nav">
 				<Link to="/" activeOptions={{ exact: true }}>
-					Tribe
+					Modules
 				</Link>
+				<Link to="/tribe">Tribe</Link>
 				<Link to="/alliance">Alliance</Link>
+				<Link to="/job-board">Job Board</Link>
+				<Link to="/markets">Markets</Link>
+				<Link to="/logistics">Logistics</Link>
 				<a href={spineHref}>Spine</a>
 			</nav>
 

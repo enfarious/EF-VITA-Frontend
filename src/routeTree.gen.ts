@@ -9,9 +9,33 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as TribeRouteImport } from './routes/tribe'
+import { Route as MarketsRouteImport } from './routes/markets'
+import { Route as LogisticsRouteImport } from './routes/logistics'
+import { Route as JobBoardRouteImport } from './routes/job-board'
 import { Route as AllianceRouteImport } from './routes/alliance'
 import { Route as IndexRouteImport } from './routes/index'
 
+const TribeRoute = TribeRouteImport.update({
+  id: '/tribe',
+  path: '/tribe',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MarketsRoute = MarketsRouteImport.update({
+  id: '/markets',
+  path: '/markets',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LogisticsRoute = LogisticsRouteImport.update({
+  id: '/logistics',
+  path: '/logistics',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const JobBoardRoute = JobBoardRouteImport.update({
+  id: '/job-board',
+  path: '/job-board',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AllianceRoute = AllianceRouteImport.update({
   id: '/alliance',
   path: '/alliance',
@@ -26,31 +50,88 @@ const IndexRoute = IndexRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/alliance': typeof AllianceRoute
+  '/job-board': typeof JobBoardRoute
+  '/logistics': typeof LogisticsRoute
+  '/markets': typeof MarketsRoute
+  '/tribe': typeof TribeRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/alliance': typeof AllianceRoute
+  '/job-board': typeof JobBoardRoute
+  '/logistics': typeof LogisticsRoute
+  '/markets': typeof MarketsRoute
+  '/tribe': typeof TribeRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/alliance': typeof AllianceRoute
+  '/job-board': typeof JobBoardRoute
+  '/logistics': typeof LogisticsRoute
+  '/markets': typeof MarketsRoute
+  '/tribe': typeof TribeRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/alliance'
+  fullPaths:
+    | '/'
+    | '/alliance'
+    | '/job-board'
+    | '/logistics'
+    | '/markets'
+    | '/tribe'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/alliance'
-  id: '__root__' | '/' | '/alliance'
+  to: '/' | '/alliance' | '/job-board' | '/logistics' | '/markets' | '/tribe'
+  id:
+    | '__root__'
+    | '/'
+    | '/alliance'
+    | '/job-board'
+    | '/logistics'
+    | '/markets'
+    | '/tribe'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AllianceRoute: typeof AllianceRoute
+  JobBoardRoute: typeof JobBoardRoute
+  LogisticsRoute: typeof LogisticsRoute
+  MarketsRoute: typeof MarketsRoute
+  TribeRoute: typeof TribeRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/tribe': {
+      id: '/tribe'
+      path: '/tribe'
+      fullPath: '/tribe'
+      preLoaderRoute: typeof TribeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/markets': {
+      id: '/markets'
+      path: '/markets'
+      fullPath: '/markets'
+      preLoaderRoute: typeof MarketsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/logistics': {
+      id: '/logistics'
+      path: '/logistics'
+      fullPath: '/logistics'
+      preLoaderRoute: typeof LogisticsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/job-board': {
+      id: '/job-board'
+      path: '/job-board'
+      fullPath: '/job-board'
+      preLoaderRoute: typeof JobBoardRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/alliance': {
       id: '/alliance'
       path: '/alliance'
@@ -71,6 +152,10 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AllianceRoute: AllianceRoute,
+  JobBoardRoute: JobBoardRoute,
+  LogisticsRoute: LogisticsRoute,
+  MarketsRoute: MarketsRoute,
+  TribeRoute: TribeRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
