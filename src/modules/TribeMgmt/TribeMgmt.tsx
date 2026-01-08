@@ -454,13 +454,6 @@ export function TribeMgmt() {
 		return list.roles;
 	};
 
-	const preferredRole =
-		memberRoles.includes("Chief")
-			? "Chief"
-			: memberRoles.includes("Elder")
-				? "Elder"
-				: memberRoles[0] ?? "";
-
 	const canManageMembers = memberRoles.some((role) => accessFor("manage_members").includes(role));
 	const canManageRoles = memberRoles.some((role) => accessFor("manage_roles").includes(role));
 	const canManageAccessLists = memberRoles.some((role) =>
@@ -489,24 +482,6 @@ export function TribeMgmt() {
 			queryClient.invalidateQueries({ queryKey: ["module-session"] });
 		}
 	});
-
-	useEffect(() => {
-		if (typeof window === "undefined") return;
-		if (!preferredRole) return;
-		window.localStorage.setItem("moduleRole", preferredRole);
-	}, [preferredRole]);
-
-	useEffect(() => {
-		if (typeof window === "undefined") return;
-		if (!session?.user) return;
-		window.localStorage.setItem("moduleUserId", session.user.id);
-		window.localStorage.setItem("moduleUserHandle", session.user.handle);
-		if (session.user.avatarUrl) {
-			window.localStorage.setItem("moduleUserAvatar", session.user.avatarUrl);
-		} else {
-			window.localStorage.removeItem("moduleUserAvatar");
-		}
-	}, [session?.user]);
 
 
 	const updateRoleDraft = (
@@ -827,13 +802,8 @@ export function TribeMgmt() {
 	const filteredRoleIds = new Set(filteredRoles.map((role) => role.id));
 	const orderedFilteredRoles = orderedRoles.filter((role) => filteredRoleIds.has(role.id));
 	const spineLoginUrl =
-		env.apiBaseUrl ? env.apiBaseUrl.replace(/\/api\/?$/, "") + "/auth/login" : "/auth/login";
-	const showDevSession =
-		typeof window !== "undefined" &&
-		(window.location.hostname === "localhost" ||
-			window.location.hostname === "127.0.0.1" ||
-			env.moduleApiBaseUrl.includes("localhost") ||
-			env.moduleApiBaseUrl.includes("127.0.0.1"));
+		env.spineAuthUrl ||
+		(env.apiBaseUrl ? env.apiBaseUrl.replace(/\/api\/?$/, "") + "/auth/login" : "/auth/login");
 
 	const membersCount = membersQuery.data?.length ?? 0;
 	const roleCount = rolesQuery.data?.length ?? 0;
@@ -2266,49 +2236,6 @@ export function TribeMgmt() {
 									{joinError ? <span className="small">{joinError}</span> : null}
 								</form>
 							)}
-						</div>
-					) : null}
-					{showDevSession ? (
-						<div className="card subtle">
-							<div style={{ fontWeight: 700, marginBottom: 6 }}>Dev session</div>
-							<div className="small">
-								Fake a Discord session for local module API testing.
-							</div>
-							<div className="row">
-								<button
-									type="button"
-									onClick={() => {
-										window.localStorage.setItem("moduleUserId", "dev-001");
-										window.localStorage.setItem("moduleUserHandle", "Dev Chief");
-										window.localStorage.setItem("moduleRole", "Chief");
-										queryClient.invalidateQueries({ queryKey: ["module-session"] });
-									}}
-								>
-									Use Chief
-								</button>
-								<button
-									type="button"
-									onClick={() => {
-										window.localStorage.setItem("moduleUserId", "dev-002");
-										window.localStorage.setItem("moduleUserHandle", "Dev Elder");
-										window.localStorage.setItem("moduleRole", "Elder");
-										queryClient.invalidateQueries({ queryKey: ["module-session"] });
-									}}
-								>
-									Use Elder
-								</button>
-								<button
-									type="button"
-									onClick={() => {
-										window.localStorage.setItem("moduleUserId", "dev-003");
-										window.localStorage.setItem("moduleUserHandle", "Dev Member");
-										window.localStorage.setItem("moduleRole", "Member");
-										queryClient.invalidateQueries({ queryKey: ["module-session"] });
-									}}
-								>
-									Use Member
-								</button>
-							</div>
 						</div>
 					) : null}
 				</div>

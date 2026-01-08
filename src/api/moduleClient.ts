@@ -58,24 +58,35 @@ export async function moduleFetch<T>(
 	}
 ): Promise<T> {
 	const url = resolveModuleUrl(path);
+	const moduleApiBase = env.moduleApiBaseUrl ?? "";
+	const useDevModuleHeaders = Boolean(
+		moduleApiBase && /localhost|127\.0\.0\.1/.test(moduleApiBase)
+	);
 	const roleHeader =
-		typeof window !== "undefined" ? window.localStorage.getItem("moduleRole") ?? "" : "";
+		useDevModuleHeaders && typeof window !== "undefined"
+			? window.localStorage.getItem("moduleRole") ?? ""
+			: "";
 	const userId =
-		typeof window !== "undefined" ? window.localStorage.getItem("moduleUserId") ?? "" : "";
+		useDevModuleHeaders && typeof window !== "undefined"
+			? window.localStorage.getItem("moduleUserId") ?? ""
+			: "";
 	const userHandle =
-		typeof window !== "undefined" ? window.localStorage.getItem("moduleUserHandle") ?? "" : "";
+		useDevModuleHeaders && typeof window !== "undefined"
+			? window.localStorage.getItem("moduleUserHandle") ?? ""
+			: "";
 	const userAvatar =
-		typeof window !== "undefined" ? window.localStorage.getItem("moduleUserAvatar") ?? "" : "";
+		useDevModuleHeaders && typeof window !== "undefined"
+			? window.localStorage.getItem("moduleUserAvatar") ?? ""
+			: "";
 
 	const res = await fetch(url, {
 		method: opts?.method ?? "GET",
 		credentials: "include",
 		headers: {
-			"X-Module-Auth": "true",
-			"X-Module-Role": roleHeader,
-			...(userId ? { "X-Module-User-Id": userId } : {}),
-			...(userHandle ? { "X-Module-User-Handle": userHandle } : {}),
-			...(userAvatar ? { "X-Module-User-Avatar": userAvatar } : {}),
+			...(useDevModuleHeaders ? { "X-Module-Auth": "true", "X-Module-Role": roleHeader } : {}),
+			...(useDevModuleHeaders && userId ? { "X-Module-User-Id": userId } : {}),
+			...(useDevModuleHeaders && userHandle ? { "X-Module-User-Handle": userHandle } : {}),
+			...(useDevModuleHeaders && userAvatar ? { "X-Module-User-Avatar": userAvatar } : {}),
 			...(opts?.body != null ? { "Content-Type": "application/json" } : {}),
 			...(opts?.headers ?? {})
 		},
